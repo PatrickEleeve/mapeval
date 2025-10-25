@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 from config import AGENT_CONFIG, DEEPSEEK_API_KEY, OPENAI_API_KEY, TRADING_CONFIG
 from data_manager import RealTimeMarketData
@@ -80,6 +80,17 @@ def _parse_args() -> argparse.Namespace:
         default=TRADING_CONFIG.get("min_long_exposure", 0.0),
         help="Minimum positive leverage exposure (fraction of equity) required for long trades.",
     )
+    parser.add_argument(
+        "--initial-capital",
+        type=float,
+        default=TRADING_CONFIG["initial_capital"],
+        help="Initial account equity in USDT.",
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Skip prompts and run with command-line arguments only.",
+    )
     return parser.parse_args()
 
 
@@ -88,70 +99,122 @@ def _select_duration(duration_label: str) -> float:
     return float(durations.get(duration_label, durations["1h"]))
 
 
-def main() -> None:
-    args = _parse_args()
-    duration_seconds = _select_duration(args.duration)
-    symbols: List[str] = [symbol.upper() for symbol in args.symbols]
-    provider = args.llm_provider.lower()
-    provider_config: Dict[str, float] = AGENT_CONFIG.get(provider, {})
+def _prompt_menu(title: str, options: Sequence[str], default_value: str) -> str:
+    indexed = list(options)
+    if not indexed:
+        raise ValueError("No options provided for selection.")
+    try:
+        default_index = indexed.index(default_value) + 1
+    except ValueError:
+        default_index = 1
+
+    while True:
+        print(title)
+        for idx, option in enumerate(indexed, start=1):
+            print(f"  {idx}) {option}")
+        raw = input(f"Choose option [{default_index}]: ").strip()
+        if not raw:
+            return indexed[default_index - 1]
+        if raw.isdigit():
+            selected = int(raw)
+            if 1 <= selected <= len(indexed):
+                return indexed[selected - 1]
+        print("Invalid choice. Try again.")
+
+
+def _prompt_float(prompt: str, default_value: float) -> float:
+    while True:
+        raw = input(f"{prompt} [{default_value}]: ").strip()
+        if not raw:
+            return default_value
+        try:
+            value = float(raw)
+            if value <= 0:
+                raise ValueError
+            return value
+        except ValueError:
+            print("Please enter a positive number.")
+
+
+def _api_key_for_provider(provider: str) -> str:
+    if provider == "deepseek":
+        return DEEPSEEK_API_KEY
+    return OPENAI_API_KEY
+
+
+def _run_trading_session(
+    *,
+    provider: str,
+    symbols: Sequence[str],
+    duration_label: str,
+    poll: float,
+    decision: float,
+    max_leverage: float,
+    history_interval: str,
+    history_lookback: int,
+    print_interval: float,
+    log_dir: str,
+    min_long_exposure: float,
+    initial_capital: float,
+) -> None:
+    provider_key = provider.lower()
+    provider_config: Dict[str, float] = AGENT_CONFIG.get(provider_key, {})
+    duration_seconds = _select_duration(duration_label)
+    uppercase_symbols: List[str] = [symbol.upper() for symbol in symbols]
 
     print("=== Real-Time Leveraged Trading ===")
-    print(f"Symbols: {', '.join(symbols)}")
-    print(f"Duration: {args.duration} ({duration_seconds:.0f} seconds)")
-    print(f"Polling interval: {args.poll} s | Decision interval: {args.decision} s")
-    print(f"Maximum leverage: {args.max_leverage}x")
-    print(f"LLM provider: {provider}")
-    if args.min_long_exposure > 0:
-        print(f"Minimum long exposure: {args.min_long_exposure:.4f}x of equity")
+    print(f"Provider: {provider_key}")
+    print(f"Symbols: {', '.join(uppercase_symbols)}")
+    print(f"Duration: {duration_label} ({duration_seconds:.0f} seconds)")
+    print(f"Initial capital: {initial_capital:.2f} USDT")
+    print(f"Polling interval: {poll} s | Decision interval: {decision} s")
+    print(f"Maximum leverage: {max_leverage}x")
+    if min_long_exposure > 0:
+        print(f"Minimum long exposure: {min_long_exposure:.4f}x of equity")
 
     market_data = RealTimeMarketData(
-        symbols=symbols,
-        interval=args.history_interval,
-        lookback=args.history_lookback,
+        symbols=uppercase_symbols,
+        interval=history_interval,
+        lookback=history_lookback,
     )
     try:
         market_data.start_websocket()
     except Exception:
         pass
-    if provider == "deepseek":
-        api_key = DEEPSEEK_API_KEY
-    else:
-        api_key = OPENAI_API_KEY
-
-    base_url = provider_config.get("base_url")
 
     agent = LLMAgent(
-        api_key=api_key,
+        api_key=_api_key_for_provider(provider_key),
         config=provider_config,
-        provider=provider,
-        base_url=base_url,
-        symbols=symbols,
-        max_leverage=args.max_leverage,
+        provider=provider_key,
+        base_url=provider_config.get("base_url"),
+        symbols=uppercase_symbols,
+        max_leverage=max_leverage,
     )
-    reporter = RealTimeReporter(print_interval_seconds=args.print_interval)
-    session_logger = SessionLogger(args.log_dir)
+    reporter = RealTimeReporter(print_interval_seconds=print_interval)
+    session_logger = SessionLogger(log_dir)
     engine = RealTimeTradingEngine(
         market_data=market_data,
         agent=agent,
-        initial_capital=TRADING_CONFIG["initial_capital"],
-        max_leverage=args.max_leverage,
-        poll_interval_seconds=args.poll,
-        decision_interval_seconds=args.decision,
-        min_long_exposure=args.min_long_exposure,
+        initial_capital=initial_capital,
+        max_leverage=max_leverage,
+        poll_interval_seconds=poll,
+        decision_interval_seconds=decision,
+        min_long_exposure=min_long_exposure,
     )
 
     run_args = {
-        "duration_label": args.duration,
+        "duration_label": duration_label,
         "duration_seconds": duration_seconds,
-        "symbols": symbols,
-        "poll_interval_seconds": args.poll,
-        "decision_interval_seconds": args.decision,
-        "max_leverage": args.max_leverage,
-        "history_interval": args.history_interval,
-        "history_lookback": args.history_lookback,
-        "log_dir": args.log_dir,
-        "min_long_exposure": args.min_long_exposure,
-        "llm_provider": provider,
+        "symbols": uppercase_symbols,
+        "poll_interval_seconds": poll,
+        "decision_interval_seconds": decision,
+        "max_leverage": max_leverage,
+        "history_interval": history_interval,
+        "history_lookback": history_lookback,
+        "log_dir": log_dir,
+        "min_long_exposure": min_long_exposure,
+        "llm_provider": provider_key,
+        "initial_capital": initial_capital,
     }
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -192,7 +255,58 @@ def main() -> None:
     print(f"Realized PnL:   {final_account.get('realized_pnl', 0.0):.2f} USDT")
     print(f"Unrealized PnL: {final_account.get('unrealized_pnl', 0.0):.2f} USDT")
     print(f"Trades logged:  {len(summary.get('trade_log', []))}")
-    print(f"Session log written to: {log_path}")
+    print(f"Session log written to: {log_path}\n")
+
+
+def _interactive_cli(args: argparse.Namespace) -> None:
+    print("=== Interactive Session Setup ===")
+    symbols = [symbol.upper() for symbol in args.symbols]
+    durations = list(TRADING_CONFIG["duration_seconds"].keys())
+    duration_label = _prompt_menu("Select duration", durations, args.duration)
+    initial_capital = _prompt_float("Initial capital (USDT)", args.initial_capital)
+    providers = sorted(AGENT_CONFIG.keys())
+    provider_choice = _prompt_menu("Select provider or all", providers + ["all"], "all")
+    if provider_choice == "all":
+        providers_to_run = providers
+    else:
+        providers_to_run = [provider_choice]
+
+    for provider in providers_to_run:
+        _run_trading_session(
+            provider=provider,
+            symbols=symbols,
+            duration_label=duration_label,
+            poll=args.poll,
+            decision=args.decision,
+            max_leverage=args.max_leverage,
+            history_interval=args.history_interval,
+            history_lookback=args.history_lookback,
+            print_interval=args.print_interval,
+            log_dir=args.log_dir,
+            min_long_exposure=args.min_long_exposure,
+            initial_capital=initial_capital,
+        )
+
+
+def main() -> None:
+    args = _parse_args()
+    if not getattr(args, "non_interactive", False):
+        _interactive_cli(args)
+    else:
+        _run_trading_session(
+            provider=args.llm_provider,
+            symbols=args.symbols,
+            duration_label=args.duration,
+            poll=args.poll,
+            decision=args.decision,
+            max_leverage=args.max_leverage,
+            history_interval=args.history_interval,
+            history_lookback=args.history_lookback,
+            print_interval=args.print_interval,
+            log_dir=args.log_dir,
+            min_long_exposure=args.min_long_exposure,
+            initial_capital=args.initial_capital,
+        )
 
 
 if __name__ == "__main__":

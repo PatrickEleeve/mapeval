@@ -51,9 +51,41 @@ class SessionLogger:
         ]
         summary_copy["llm_reasoning"] = llm_reasoning
 
+        session_id = self._generate_session_id(start_time, llm_provider)
+        reasoning_records: list[Dict[str, Any]] = []
+        if isinstance(decision_log, list):
+            for entry in decision_log:
+                if not isinstance(entry, dict):
+                    continue
+                reasoning_text = entry.get("reasoning")
+                if not isinstance(reasoning_text, str) or not reasoning_text:
+                    continue
+                reasoning_records.append(
+                    {
+                        "timestamp": entry.get("timestamp"),
+                        "source": entry.get("source"),
+                        "reasoning": reasoning_text,
+                        "requested_exposure": entry.get("requested_exposure"),
+                        "applied_exposure": entry.get("applied_exposure"),
+                        "status": entry.get("status"),
+                        "reason": entry.get("reason"),
+                    }
+                )
+
+        reasoning_path: Optional[Path] = None
+        if reasoning_records:
+            reasoning_filename = f"{session_id}_llm_decisions.jsonl"
+            reasoning_path = self.log_dir / reasoning_filename
+            with reasoning_path.open("w", encoding="utf-8") as fh:
+                for record_line in reasoning_records:
+                    fh.write(
+                        json.dumps(record_line, ensure_ascii=False, default=self._json_default)
+                    )
+                    fh.write("\n")
+
         record: Dict[str, Any] = {
             "metadata": {
-                "session_id": self._generate_session_id(start_time, llm_provider),
+                "session_id": session_id,
                 "started_at": start_time,
                 "ended_at": end_time,
                 "llm_provider": llm_provider,
@@ -62,6 +94,8 @@ class SessionLogger:
             "parameters": run_args,
             "summary": summary_copy,
         }
+        if reasoning_path is not None:
+            record["metadata"]["llm_decision_log"] = reasoning_path.name
 
         file_path = self.log_dir / f"{record['metadata']['session_id']}.json"
         with file_path.open("w", encoding="utf-8") as fh:

@@ -37,6 +37,16 @@ _SYNTHETIC_BASES: Dict[str, float] = {
     "ADAUSDT": 0.45,
     "SUIUSDT": 1.2,
     "AAVEUSDT": 120.0,
+    "LINKUSDT": 15.0,
+    "MATICUSDT": 0.75,
+    "AVAXUSDT": 35.0,
+    "DOTUSDT": 6.5,
+    "OPUSDT": 2.5,
+    "ARBUSDT": 1.9,
+    "NEARUSDT": 4.0,
+    "ATOMUSDT": 8.5,
+    "LTCUSDT": 85.0,
+    "FTMUSDT": 0.6,
 }
 _INTERVAL_TO_FREQ: Dict[str, str] = {
     "1m": "1min",

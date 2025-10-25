@@ -35,6 +35,7 @@ python src/main.py --duration 1h --symbols BTCUSDT ETHUSDT
 ```
 
 Watch the console. Trades and warnings print in real time. Session files land in `logs/`.
+All timestamps in logs and console output use UTC+0 for reproducibility.
 
 ## Inspect Output
 Logs hold JSON bundles. Each record stores parameters plus equity history. Use `jq` or notebooks for analysis.
@@ -58,4 +59,3 @@ Read these files for deeper study. Each module favours small functions for clari
 
 ## Operational Notes
 Huge leverage magnifies losses. Use sandbox keys first. Confirm funding data paths and timeouts. Document changes inside pull requests.
-
