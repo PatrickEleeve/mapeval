@@ -10,14 +10,12 @@ always have a clean pandas DataFrame to work with.
 from __future__ import annotations
 
 import math
-import time
-from typing import Dict, Final, Iterable, List, Optional, Sequence
+from typing import Dict, Final, Iterable, List, Optional
 
 import pandas as pd
 
 from binance_data_source import (
     DEFAULT_BASE,
-    FALLBACK_BASES,
     check_api,
     fetch_klines,
     get_ticker_price,
@@ -39,16 +37,6 @@ _SYNTHETIC_BASES: Dict[str, float] = {
     "ADAUSDT": 0.45,
     "SUIUSDT": 1.2,
     "AAVEUSDT": 120.0,
-    "LINKUSDT": 15.0,
-    "MATICUSDT": 0.75,
-    "AVAXUSDT": 35.0,
-    "DOTUSDT": 6.5,
-    "OPUSDT": 2.5,
-    "ARBUSDT": 1.9,
-    "NEARUSDT": 4.0,
-    "ATOMUSDT": 8.5,
-    "LTCUSDT": 85.0,
-    "FTMUSDT": 0.6,
 }
 _INTERVAL_TO_FREQ: Dict[str, str] = {
     "1m": "1min",
@@ -101,12 +89,7 @@ def _generate_synthetic_history(symbol: str, interval: str, lookback: int) -> pd
     return pd.DataFrame({"Date": dates, "Close": closes})
 
 
-def _fetch_symbol_history(
-    symbol: str,
-    interval: str,
-    lookback: int,
-    base_url: Sequence[str] | str,
-) -> pd.DataFrame:
+def _fetch_symbol_history(symbol: str, interval: str, lookback: int, base_url: str) -> pd.DataFrame:
     try:
         klines = fetch_klines(symbol=symbol, interval=interval, limit=lookback, base_url=base_url)
         df = _klines_to_df(klines)
@@ -125,48 +108,24 @@ class RealTimeMarketData:
         symbols: Iterable[str],
         interval: str = "1m",
         lookback: int = 500,
-        base_url: Sequence[str] | str = DEFAULT_BASE,
+        base_url: str = DEFAULT_BASE,
     ) -> None:
         self.symbols = list(symbols)
         if not self.symbols:
             raise ValueError("At least one symbol must be provided.")
         self.interval = interval
         self.lookback = lookback
-        self.base_urls = self._prepare_base_urls(base_url)
-        self.base_url = self.base_urls[0]
+        self.base_url = base_url
         self._columns = [f"{symbol}_Close" for symbol in self.symbols]
         self.price_history = self._bootstrap_history()
         self._ws: Optional[BinanceSpotWS] = None
         self._funding_cache: Dict[str, float] = {}
         self._last_funding_fetch_ts: Optional[pd.Timestamp] = None
-        self._consecutive_fetch_failures = 0
-        self._offline_until: Optional[float] = None
-        self._offline_backoff_seconds = 60.0
-
-    @staticmethod
-    def _prepare_base_urls(base_url: Sequence[str] | str) -> List[str]:
-        if isinstance(base_url, (list, tuple, set)):
-            candidates = list(base_url)
-        else:
-            focus = str(base_url).strip() or DEFAULT_BASE
-            if focus.rstrip("/") == DEFAULT_BASE.rstrip("/"):
-                candidates = list(FALLBACK_BASES)
-            else:
-                candidates = [focus]
-        normalized: List[str] = []
-        seen = set()
-        for value in candidates:
-            url = str(value).strip().rstrip("/")
-            if not url or url in seen:
-                continue
-            normalized.append(url)
-            seen.add(url)
-        return normalized or [DEFAULT_BASE.rstrip("/")]
 
     def _bootstrap_history(self) -> pd.DataFrame:
         frames = []
         for symbol in self.symbols:
-            history = _fetch_symbol_history(symbol, self.interval, self.lookback, self.base_urls)
+            history = _fetch_symbol_history(symbol, self.interval, self.lookback, self.base_url)
             history = history.rename(columns={"Close": f"{symbol}_Close"})
             history = history.set_index("Date")
             if getattr(history.index, "tz", None) is not None:
@@ -194,15 +153,8 @@ class RealTimeMarketData:
             ws_prices = self._ws.get_latest_prices()
             if all(sym in ws_prices for sym in self.symbols):
                 return {sym: float(ws_prices[sym]) for sym in self.symbols}
-        now = time.time()
-        if self._offline_until is not None and now < self._offline_until:
-            cached = self.latest_prices()
-            if cached:
-                return cached
         try:
-            payload = get_ticker_price(symbols=self.symbols, base_url=self.base_urls)
-            self._consecutive_fetch_failures = 0
-            self._offline_until = None
+            payload = get_ticker_price(symbols=self.symbols, base_url=self.base_url)
             if isinstance(payload, dict):
                 payload = [payload]
             prices: Dict[str, float] = {}
@@ -214,12 +166,6 @@ class RealTimeMarketData:
                 raise ValueError("Incomplete ticker payload received.")
             return prices
         except Exception as exc:  # pragma: no cover - network dependent
-            self._consecutive_fetch_failures += 1
-            if self._consecutive_fetch_failures >= 3:
-                cached = self.latest_prices()
-                if cached:
-                    self._offline_until = now + self._offline_backoff_seconds
-                    return cached
             raise RuntimeError(f"Failed to fetch latest prices: {exc}") from exc
 
     def start_websocket(self) -> None:

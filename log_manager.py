@@ -127,3 +127,4 @@ class SessionLogger:
             except Exception:
                 pass
         return str(obj)
+

@@ -23,6 +23,7 @@ Create `.env` near the repo root. Place provider keys there.
 ```bash
 echo "OPENAI_API_KEY=sk-..." >> .env
 echo "DEEPSEEK_API_KEY=sk-..." >> .env
+echo "QWEN_API_KEY=sk-..." >> .env
 ```
 
 ## Run A Session
@@ -31,10 +32,11 @@ Export `PYTHONPATH` so imports resolve. Launch the driver.
 ```bash
 cd mapeval
 export PYTHONPATH=src
-python src/main.py --duration 1h --symbols BTCUSDT ETHUSDT
+python src/main.py --duration 1h --symbols BTCUSDT ETHUSDT --llm-provider openai
 ```
 
 Watch the console. Trades and warnings print in real time. Session files land in `logs/`.
+Supported providers today: `openai`, `deepseek`, `qwen`.
 All timestamps in logs and console output use UTC+0 for reproducibility.
 
 ## Inspect Output

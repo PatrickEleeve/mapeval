@@ -20,8 +20,8 @@ client = OpenAI(
 response = client.chat.completions.create(
     model="deepseek-chat",
     messages=[
-        {"role": "system", "content": "You are a helpful assistant"},
-        {"role": "user", "content": "你是什么模型"},
+        {"role": "system", "content": "You are a professional investor"},
+        {"role": "user", "content": "你喜欢什么资产"},
     ],
     stream=False,
 )

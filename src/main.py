@@ -6,12 +6,22 @@ import argparse
 from datetime import datetime, timezone
 from typing import Dict, List, Sequence
 
-from config import AGENT_CONFIG, DEEPSEEK_API_KEY, OPENAI_API_KEY, TRADING_CONFIG
+from config import AGENT_CONFIG, DEEPSEEK_API_KEY, OPENAI_API_KEY, QWEN_API_KEY, TRADING_CONFIG
 from data_manager import RealTimeMarketData
 from llm_agent import LLMAgent
 from log_manager import SessionLogger
 from reporter import RealTimeReporter
 from trading_engine import RealTimeTradingEngine
+
+
+AVAILABLE_INDICATORS = (
+    "rsi",
+    "macd",
+    "atr",
+    "bollinger_bands",
+    "coefficient_of_variation",
+    "ma_slope",
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -47,6 +57,18 @@ def _parse_args() -> argparse.Namespace:
         help="Maximum aggregate leverage allowed.",
     )
     parser.add_argument(
+        "--per-symbol-max-exposure",
+        type=float,
+        default=TRADING_CONFIG.get("per_symbol_max_exposure", TRADING_CONFIG["max_leverage"]),
+        help="Maximum absolute leverage allowed on any single symbol.",
+    )
+    parser.add_argument(
+        "--max-exposure-delta",
+        type=float,
+        default=TRADING_CONFIG.get("max_exposure_delta", TRADING_CONFIG["max_leverage"]),
+        help="Maximum per-symbol change in leverage between consecutive decisions.",
+    )
+    parser.add_argument(
         "--history-interval",
         default=TRADING_CONFIG["history_interval"],
         help="Kline interval used to bootstrap history (e.g., 1m, 5m).",
@@ -67,6 +89,12 @@ def _parse_args() -> argparse.Namespace:
         "--log-dir",
         default="logs",
         help="Directory where session logs should be written.",
+    )
+    parser.add_argument(
+        "--indicators",
+        nargs="+",
+        choices=list(AVAILABLE_INDICATORS) + ["all", "none"],
+        help="Technical indicators to expose to the LLM (use 'all' for every indicator).",
     )
     parser.add_argument(
         "--llm-provider",
@@ -97,6 +125,26 @@ def _parse_args() -> argparse.Namespace:
 def _select_duration(duration_label: str) -> float:
     durations: Dict[str, int] = TRADING_CONFIG["duration_seconds"]
     return float(durations.get(duration_label, durations["1h"]))
+
+
+def _normalize_indicators(raw: Sequence[str] | None) -> List[str]:
+    if raw is None:
+        return []
+    normalized: List[str] = []
+    seen = set()
+    tokens = [token.lower() for token in raw]
+    if "all" in tokens:
+        return list(AVAILABLE_INDICATORS)
+    for token in tokens:
+        if token in ("none", ""):
+            continue
+        if token not in AVAILABLE_INDICATORS:
+            continue
+        if token in seen:
+            continue
+        normalized.append(token)
+        seen.add(token)
+    return normalized
 
 
 def _prompt_menu(title: str, options: Sequence[str], default_value: str) -> str:
@@ -136,9 +184,24 @@ def _prompt_float(prompt: str, default_value: float) -> float:
             print("Please enter a positive number.")
 
 
+def _prompt_indicators(default: Sequence[str] | None) -> List[str]:
+    default_list = _normalize_indicators(default)
+    default_display = ", ".join(default_list) if default_list else "none"
+    print("Available technical indicators:")
+    for name in AVAILABLE_INDICATORS:
+        print(f"  - {name}")
+    raw = input(f"Select indicators (comma or space separated) [{default_display}]: ").strip()
+    if not raw:
+        return default_list
+    tokens = [token for token in raw.replace(",", " ").split(" ") if token]
+    return _normalize_indicators(tokens)
+
+
 def _api_key_for_provider(provider: str) -> str:
     if provider == "deepseek":
         return DEEPSEEK_API_KEY
+    if provider == "qwen":
+        return QWEN_API_KEY
     return OPENAI_API_KEY
 
 
@@ -150,17 +213,21 @@ def _run_trading_session(
     poll: float,
     decision: float,
     max_leverage: float,
+    per_symbol_max_exposure: float,
+    max_exposure_delta: float,
     history_interval: str,
     history_lookback: int,
     print_interval: float,
     log_dir: str,
     min_long_exposure: float,
     initial_capital: float,
+    indicators: Sequence[str] | None = None,
 ) -> None:
     provider_key = provider.lower()
     provider_config: Dict[str, float] = AGENT_CONFIG.get(provider_key, {})
     duration_seconds = _select_duration(duration_label)
     uppercase_symbols: List[str] = [symbol.upper() for symbol in symbols]
+    selected_indicators = _normalize_indicators(indicators)
 
     print("=== Real-Time Leveraged Trading ===")
     print(f"Provider: {provider_key}")
@@ -169,8 +236,13 @@ def _run_trading_session(
     print(f"Initial capital: {initial_capital:.2f} USDT")
     print(f"Polling interval: {poll} s | Decision interval: {decision} s")
     print(f"Maximum leverage: {max_leverage}x")
+    print(f"Per-symbol cap: {per_symbol_max_exposure}x | Max delta/step: {max_exposure_delta}x")
     if min_long_exposure > 0:
         print(f"Minimum long exposure: {min_long_exposure:.4f}x of equity")
+    if selected_indicators:
+        print(f"Indicators: {', '.join(selected_indicators)}")
+    else:
+        print("Indicators: none")
 
     market_data = RealTimeMarketData(
         symbols=uppercase_symbols,
@@ -189,6 +261,9 @@ def _run_trading_session(
         base_url=provider_config.get("base_url"),
         symbols=uppercase_symbols,
         max_leverage=max_leverage,
+        per_symbol_max_exposure=per_symbol_max_exposure,
+        max_exposure_delta=max_exposure_delta,
+        indicators=selected_indicators,
     )
     reporter = RealTimeReporter(print_interval_seconds=print_interval)
     session_logger = SessionLogger(log_dir)
@@ -200,6 +275,8 @@ def _run_trading_session(
         poll_interval_seconds=poll,
         decision_interval_seconds=decision,
         min_long_exposure=min_long_exposure,
+        per_symbol_max_exposure=per_symbol_max_exposure,
+        max_exposure_delta=max_exposure_delta,
     )
 
     run_args = {
@@ -209,12 +286,15 @@ def _run_trading_session(
         "poll_interval_seconds": poll,
         "decision_interval_seconds": decision,
         "max_leverage": max_leverage,
+        "per_symbol_max_exposure": per_symbol_max_exposure,
+        "max_exposure_delta": max_exposure_delta,
         "history_interval": history_interval,
         "history_lookback": history_lookback,
         "log_dir": log_dir,
         "min_long_exposure": min_long_exposure,
         "llm_provider": provider_key,
         "initial_capital": initial_capital,
+        "indicators": selected_indicators,
     }
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -270,6 +350,7 @@ def _interactive_cli(args: argparse.Namespace) -> None:
         providers_to_run = providers
     else:
         providers_to_run = [provider_choice]
+    indicators = _prompt_indicators(args.indicators)
 
     for provider in providers_to_run:
         _run_trading_session(
@@ -279,12 +360,15 @@ def _interactive_cli(args: argparse.Namespace) -> None:
             poll=args.poll,
             decision=args.decision,
             max_leverage=args.max_leverage,
+            per_symbol_max_exposure=args.per_symbol_max_exposure,
+            max_exposure_delta=args.max_exposure_delta,
             history_interval=args.history_interval,
             history_lookback=args.history_lookback,
             print_interval=args.print_interval,
             log_dir=args.log_dir,
             min_long_exposure=args.min_long_exposure,
             initial_capital=initial_capital,
+            indicators=indicators,
         )
 
 
@@ -300,12 +384,15 @@ def main() -> None:
             poll=args.poll,
             decision=args.decision,
             max_leverage=args.max_leverage,
+            per_symbol_max_exposure=args.per_symbol_max_exposure,
+            max_exposure_delta=args.max_exposure_delta,
             history_interval=args.history_interval,
             history_lookback=args.history_lookback,
             print_interval=args.print_interval,
             log_dir=args.log_dir,
             min_long_exposure=args.min_long_exposure,
             initial_capital=args.initial_capital,
+            indicators=args.indicators,
         )
 
 
