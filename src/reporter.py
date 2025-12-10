@@ -86,6 +86,17 @@ class RealTimeReporter:
         total_unrealized = float(df["unrealized_pnl"].iloc[-1])
         num_trades = len(trade_log)
 
+        winning_trades = [t for t in trade_log if t.get("realized_pnl", 0) > 0]
+        win_rate = len(winning_trades) / num_trades if num_trades > 0 else 0.0
+
+        equity_returns = equity_series.pct_change().dropna()
+        if not equity_returns.empty and equity_returns.std() > 0:
+            avg_interval = (df.index[-1] - df.index[0]).total_seconds() / len(df) if len(df) > 1 else 60
+            periods_per_year = (365 * 24 * 60 * 60) / avg_interval
+            sharpe_ratio = (equity_returns.mean() / equity_returns.std()) * math.sqrt(periods_per_year)
+        else:
+            sharpe_ratio = 0.0
+
         seconds_per_year = 365 * 24 * 60 * 60
         if start_equity > 0 and duration_seconds >= 24 * 60 * 60:
             growth = end_equity / start_equity
@@ -102,6 +113,8 @@ class RealTimeReporter:
             "total_return": total_return,
             "annualized_return": annualized_return,
             "max_drawdown": max_drawdown,
+            "sharpe_ratio": sharpe_ratio,
+            "win_rate": win_rate,
             "number_of_trades": num_trades,
             "total_realized_pnl": total_realized,
             "ending_unrealized_pnl": total_unrealized,
@@ -116,6 +129,8 @@ class RealTimeReporter:
             print("Annualized:   N/A (session shorter than 1 day or invalid growth)")
         else:
             print(f"Annualized:   {annualized_return * 100:.2f}%")
+        print(f"Sharpe Ratio: {sharpe_ratio:.2f}")
+        print(f"Win Rate:     {win_rate * 100:.2f}%")
         print(f"Max drawdown: {max_drawdown * 100:.2f}%")
         print(f"Realized PnL: {total_realized:.2f} USDT")
         print(f"Unrealized PnL: {total_unrealized:.2f} USDT")

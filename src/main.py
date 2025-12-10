@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Sequence
 
 from config import AGENT_CONFIG, DEEPSEEK_API_KEY, OPENAI_API_KEY, QWEN_API_KEY, TRADING_CONFIG
-from data_manager import RealTimeMarketData
-from llm_agent import LLMAgent
+from data_manager import RealTimeMarketData, BacktestMarketData, load_historical_data
+from llm_agent import LLMAgent, BaselineAgent
 from log_manager import SessionLogger
 from reporter import RealTimeReporter
+from tui_reporter import TUIReporter
 from trading_engine import RealTimeTradingEngine
 
 
@@ -26,6 +27,18 @@ AVAILABLE_INDICATORS = (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a real-time leveraged trading session.")
+    parser.add_argument(
+        "--mode",
+        choices=["realtime", "backtest"],
+        default="realtime",
+        help="Execution mode: 'realtime' connects to live API, 'backtest' replays history.",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["llm", "buy_hold", "ma_crossover", "random"],
+        default="llm",
+        help="Strategy to run.",
+    )
     parser.add_argument(
         "--duration",
         choices=TRADING_CONFIG["duration_seconds"].keys(),
@@ -113,6 +126,28 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=TRADING_CONFIG["initial_capital"],
         help="Initial account equity in USDT.",
+    )
+    parser.add_argument(
+        "--commission",
+        type=float,
+        default=TRADING_CONFIG.get("commission_rate", 0.0),
+        help="Commission rate (e.g. 0.0005 for 0.05%).",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=TRADING_CONFIG.get("slippage", 0.0),
+        help="Slippage rate (e.g. 0.0005 for 0.05%).",
+    )
+    parser.add_argument(
+        "--data-path",
+        default=None,
+        help="Path to CSV file for loading/saving backtest data (e.g. data/benchmark.csv).",
+    )
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="Enable TUI (Text User Interface) dashboard.",
     )
     parser.add_argument(
         "--non-interactive",
@@ -222,6 +257,12 @@ def _run_trading_session(
     min_long_exposure: float,
     initial_capital: float,
     indicators: Sequence[str] | None = None,
+    mode: str = "realtime",
+    strategy: str = "llm",
+    commission: float = 0.0,
+    slippage: float = 0.0,
+    data_path: str | None = None,
+    use_ui: bool = False,
 ) -> None:
     provider_key = provider.lower()
     provider_config: Dict[str, float] = AGENT_CONFIG.get(provider_key, {})
@@ -230,6 +271,7 @@ def _run_trading_session(
     selected_indicators = _normalize_indicators(indicators)
 
     print("=== Real-Time Leveraged Trading ===")
+    print(f"Mode: {mode} | Strategy: {strategy}")
     print(f"Provider: {provider_key}")
     print(f"Symbols: {', '.join(uppercase_symbols)}")
     print(f"Duration: {duration_label} ({duration_seconds:.0f} seconds)")
@@ -237,6 +279,7 @@ def _run_trading_session(
     print(f"Polling interval: {poll} s | Decision interval: {decision} s")
     print(f"Maximum leverage: {max_leverage}x")
     print(f"Per-symbol cap: {per_symbol_max_exposure}x | Max delta/step: {max_exposure_delta}x")
+    print(f"Commission: {commission*100:.4f}% | Slippage: {slippage*100:.4f}%")
     if min_long_exposure > 0:
         print(f"Minimum long exposure: {min_long_exposure:.4f}x of equity")
     if selected_indicators:
@@ -244,28 +287,57 @@ def _run_trading_session(
     else:
         print("Indicators: none")
 
-    market_data = RealTimeMarketData(
-        symbols=uppercase_symbols,
-        interval=history_interval,
-        lookback=history_lookback,
-    )
-    try:
-        market_data.start_websocket()
-    except Exception:
-        pass
+    if mode == "backtest":
+        print("Loading historical data for backtest...")
+        # Load enough data for lookback + simulation
+        # Assuming 1m interval, 2000 rows covers > 1 day
+        historical_df = load_historical_data(
+            uppercase_symbols, 
+            history_interval, 
+            2000,
+            cache_path=data_path
+        )
+        market_data = BacktestMarketData(
+            historical_df,
+            uppercase_symbols,
+            interval=history_interval,
+            lookback=history_lookback
+        )
+    else:
+        market_data = RealTimeMarketData(
+            symbols=uppercase_symbols,
+            interval=history_interval,
+            lookback=history_lookback,
+        )
+        try:
+            market_data.start_websocket()
+        except Exception:
+            pass
 
-    agent = LLMAgent(
-        api_key=_api_key_for_provider(provider_key),
-        config=provider_config,
-        provider=provider_key,
-        base_url=provider_config.get("base_url"),
-        symbols=uppercase_symbols,
-        max_leverage=max_leverage,
-        per_symbol_max_exposure=per_symbol_max_exposure,
-        max_exposure_delta=max_exposure_delta,
-        indicators=selected_indicators,
-    )
-    reporter = RealTimeReporter(print_interval_seconds=print_interval)
+    if strategy == "llm":
+        agent = LLMAgent(
+            api_key=_api_key_for_provider(provider_key),
+            config=provider_config,
+            provider=provider_key,
+            base_url=provider_config.get("base_url"),
+            symbols=uppercase_symbols,
+            max_leverage=max_leverage,
+            per_symbol_max_exposure=per_symbol_max_exposure,
+            max_exposure_delta=max_exposure_delta,
+            indicators=selected_indicators,
+        )
+    else:
+        agent = BaselineAgent(
+            strategy=strategy,
+            symbols=uppercase_symbols,
+            max_leverage=max_leverage,
+        )
+
+    if use_ui:
+        reporter = TUIReporter()
+    else:
+        reporter = RealTimeReporter(print_interval_seconds=print_interval)
+        
     session_logger = SessionLogger(log_dir)
     engine = RealTimeTradingEngine(
         market_data=market_data,
@@ -277,9 +349,14 @@ def _run_trading_session(
         min_long_exposure=min_long_exposure,
         per_symbol_max_exposure=per_symbol_max_exposure,
         max_exposure_delta=max_exposure_delta,
+        commission_rate=commission,
+        slippage=slippage,
+        liquidation_threshold=TRADING_CONFIG.get("liquidation_threshold", 0.05),
     )
 
     run_args = {
+        "mode": mode,
+        "strategy": strategy,
         "duration_label": duration_label,
         "duration_seconds": duration_seconds,
         "symbols": uppercase_symbols,
@@ -295,6 +372,9 @@ def _run_trading_session(
         "llm_provider": provider_key,
         "initial_capital": initial_capital,
         "indicators": selected_indicators,
+        "commission": commission,
+        "slippage": slippage,
+        "use_ui": use_ui,
     }
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -369,6 +449,12 @@ def _interactive_cli(args: argparse.Namespace) -> None:
             min_long_exposure=args.min_long_exposure,
             initial_capital=initial_capital,
             indicators=indicators,
+            mode=args.mode,
+            strategy=args.strategy,
+            commission=args.commission,
+            slippage=args.slippage,
+            data_path=args.data_path,
+            use_ui=args.ui,
         )
 
 
@@ -393,6 +479,12 @@ def main() -> None:
             min_long_exposure=args.min_long_exposure,
             initial_capital=args.initial_capital,
             indicators=args.indicators,
+            mode=args.mode,
+            strategy=args.strategy,
+            commission=args.commission,
+            slippage=args.slippage,
+            data_path=args.data_path,
+            use_ui=args.ui,
         )
 
 

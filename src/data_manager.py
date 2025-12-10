@@ -1,7 +1,6 @@
 """Market data utilities for real-time leveraged futures trading.
 
-This module provides both legacy helpers for synthetic equity data generation
-and new abstractions tailored to real-time cryptocurrency futures trading. The
+This module provides abstractions tailored to real-time cryptocurrency futures trading. The
 `RealTimeMarketData` class bootstraps an intraday price history from Binance
 and keeps it updated with the latest ticker snapshots so downstream components
 always have a clean pandas DataFrame to work with.
@@ -10,6 +9,7 @@ always have a clean pandas DataFrame to work with.
 from __future__ import annotations
 
 import math
+import os
 import time
 from typing import Dict, Final, Iterable, List, Optional, Sequence
 
@@ -28,28 +28,6 @@ from binance_ws import BinanceSpotWS
 
 _START_DATE: Final = "2015-01-01"
 _END_DATE: Final = "2024-12-31"
-_SYNTHETIC_BASES: Dict[str, float] = {
-    "BTCUSDT": 25_000.0,
-    "ETHUSDT": 1_800.0,
-    "BNBUSDT": 350.0,
-    "XRPUSDT": 0.55,
-    "SOLUSDT": 110.0,
-    "TRXUSDT": 0.12,
-    "DOGEUSDT": 0.1,
-    "ADAUSDT": 0.45,
-    "SUIUSDT": 1.2,
-    "AAVEUSDT": 120.0,
-    "LINKUSDT": 15.0,
-    "MATICUSDT": 0.75,
-    "AVAXUSDT": 35.0,
-    "DOTUSDT": 6.5,
-    "OPUSDT": 2.5,
-    "ARBUSDT": 1.9,
-    "NEARUSDT": 4.0,
-    "ATOMUSDT": 8.5,
-    "LTCUSDT": 85.0,
-    "FTMUSDT": 0.6,
-}
 _INTERVAL_TO_FREQ: Dict[str, str] = {
     "1m": "1min",
     "3m": "3min",
@@ -61,20 +39,6 @@ _INTERVAL_TO_FREQ: Dict[str, str] = {
     "4h": "4h",
     "1d": "B",
 }
-
-
-def _generate_price_series(dates: Iterable[pd.Timestamp], initial_price: float, drift: float) -> List[float]:
-    """Generate a smooth synthetic price path with mild seasonality."""
-    prices: List[float] = []
-    price = initial_price
-    for idx, _ in enumerate(dates):
-        seasonal = 0.0004 * math.sin(2.0 * math.pi * idx / 126.0)
-        cycle = 0.0003 * math.sin(2.0 * math.pi * idx / 252.0 + 1.2)
-        short_cycle = 0.0002 * math.sin(2.0 * math.pi * idx / 21.0 + 0.7)
-        growth = drift + seasonal + cycle + short_cycle
-        price *= 1.0 + growth
-        prices.append(round(price, 4))
-    return prices
 
 
 def _klines_to_df(klines: List[List]) -> pd.DataFrame:
@@ -92,29 +56,18 @@ def _interval_to_freq(interval: str) -> str:
     return _INTERVAL_TO_FREQ.get(interval, "T")
 
 
-def _generate_synthetic_history(symbol: str, interval: str, lookback: int) -> pd.DataFrame:
-    freq = _interval_to_freq(interval)
-    dates = pd.date_range(end=pd.Timestamp.utcnow().floor("s"), periods=lookback, freq=freq)
-    base_price = _SYNTHETIC_BASES.get(symbol, 100.0)
-    drift = 0.0001 if "USDT" in symbol else 0.00005
-    closes = _generate_price_series(dates, initial_price=base_price, drift=drift)
-    return pd.DataFrame({"Date": dates, "Close": closes})
-
-
 def _fetch_symbol_history(
     symbol: str,
     interval: str,
     lookback: int,
     base_url: Sequence[str] | str,
 ) -> pd.DataFrame:
-    try:
-        klines = fetch_klines(symbol=symbol, interval=interval, limit=lookback, base_url=base_url)
-        df = _klines_to_df(klines)
-        if df.empty:
-            raise ValueError("No kline data returned.")
-        return df
-    except Exception:
-        return _generate_synthetic_history(symbol, interval, lookback)
+    # Try fetching klines; if it fails, raise the error (do not fallback to synthetic data)
+    klines = fetch_klines(symbol=symbol, interval=interval, limit=lookback, base_url=base_url)
+    df = _klines_to_df(klines)
+    if df.empty:
+        raise ValueError("No kline data returned.")
+    return df
 
 
 class RealTimeMarketData:
@@ -305,38 +258,131 @@ def _attempt_binance_load(symbol: str, interval: str = "1d") -> pd.DataFrame:
     return df
 
 
-def load_market_data() -> pd.DataFrame:
-    """Legacy helper that returns daily synthetic close prices for SPY/AGG."""
-    try:
-        btc = _attempt_binance_load("BTCUSDT", interval="1d")
-        eth = _attempt_binance_load("ETHUSDT", interval="1d")
-        merged = pd.merge_asof(
-            btc.sort_values("Date"),
-            eth.sort_values("Date"),
-            on="Date",
-            direction="nearest",
-            tolerance=pd.Timedelta("1D"),
-            suffixes=("_BTC", "_ETH"),
-        )
-        if len(merged) < 252:
-            raise ValueError("Insufficient Binance history; falling back to synthetic data.")
-        result = pd.DataFrame(
-            {
-                "Date": merged["Date"],
-                "SPY_Close": merged["Close_BTC"],
-                "AGG_Close": merged["Close_ETH"],
-            }
-        )
-        return result
-    except Exception:
-        dates = pd.date_range(_START_DATE, _END_DATE, freq="B")
-        spy_prices = _generate_price_series(dates, initial_price=200.0, drift=0.00025)
-        agg_prices = _generate_price_series(dates, initial_price=100.0, drift=0.00012)
-        data = pd.DataFrame(
-            {
-                "Date": dates,
-                "SPY_Close": spy_prices,
-                "AGG_Close": agg_prices,
-            }
-        )
-        return data
+class BacktestMarketData:
+    """Simulate market data replay from a historical DataFrame."""
+
+    def __init__(
+        self,
+        history_df: pd.DataFrame,
+        symbols: Iterable[str],
+        interval: str = "1m",
+        lookback: int = 500,
+    ) -> None:
+        self.symbols = list(symbols)
+        self.interval = interval
+        self.lookback = lookback
+
+        # Ensure history_df is sorted and has Date index
+        self.full_history = history_df.sort_index()
+        if getattr(self.full_history.index, "tz", None) is not None:
+            self.full_history.index = self.full_history.index.tz_convert(None)
+
+        self.current_idx = 0
+        self.price_history = pd.DataFrame()
+
+        # Initialize with enough data for lookback if possible
+        if len(self.full_history) > lookback:
+            self.current_idx = lookback
+            self.price_history = self.full_history.iloc[: self.current_idx].copy()
+        else:
+            self.current_idx = 0
+            self.price_history = pd.DataFrame()
+
+    def fetch_latest_prices(self) -> Dict[str, float]:
+        if self.current_idx >= len(self.full_history):
+            raise StopIteration("Backtest finished.")
+
+        row = self.full_history.iloc[self.current_idx]
+        prices = {}
+        for symbol in self.symbols:
+            col = f"{symbol}_Close"
+            if col in row:
+                prices[symbol] = float(row[col])
+        return prices
+
+    def append_prices(self, prices: Dict[str, float], timestamp: pd.Timestamp | None = None) -> None:
+        # In backtest, we just advance the window from the pre-loaded history
+        if self.current_idx < len(self.full_history):
+            next_row = self.full_history.iloc[self.current_idx : self.current_idx + 1]
+            self.price_history = pd.concat([self.price_history, next_row])
+            self.price_history = self.price_history.tail(self.lookback)
+            self.current_idx += 1
+
+    def get_recent_window(self, rows: int = 120) -> pd.DataFrame:
+        window = self.price_history.tail(rows).copy()
+        window = window.reset_index()
+        return window
+
+    def latest_prices(self) -> Dict[str, float]:
+        if self.price_history.empty:
+            return {}
+        last_row = self.price_history.iloc[-1]
+        return {
+            symbol: float(last_row[f"{symbol}_Close"])
+            for symbol in self.symbols
+            if f"{symbol}_Close" in last_row
+        }
+
+    def refresh_funding_rates(self, throttle_seconds: int = 60) -> Dict[str, float]:
+        return {}
+
+    def start_websocket(self) -> None:
+        pass
+
+    def stop_websocket(self) -> None:
+        pass
+
+
+def load_historical_data(
+    symbols: Iterable[str],
+    interval: str,
+    lookback: int,
+    base_url: Sequence[str] | str = DEFAULT_BASE,
+    cache_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """Fetch and merge historical data for multiple symbols."""
+    if cache_path and os.path.exists(cache_path):
+        print(f"Loading historical data from {cache_path}...")
+        try:
+            df = pd.read_csv(cache_path, index_col="Date", parse_dates=True)
+            # Ensure columns match requested symbols
+            expected_cols = [f"{s}_Close" for s in symbols]
+            missing = [c for c in expected_cols if c not in df.columns]
+            if not missing:
+                return df
+            print(f"Cached data missing columns {missing}, refetching...")
+        except Exception as e:
+            print(f"Failed to load cache: {e}, refetching...")
+
+    base_urls = RealTimeMarketData._prepare_base_urls(base_url)
+    frames = []
+    columns = [f"{symbol}_Close" for symbol in symbols]
+    
+    for symbol in symbols:
+        history = _fetch_symbol_history(symbol, interval, lookback, base_urls)
+        history = history.rename(columns={"Close": f"{symbol}_Close"})
+        history = history.set_index("Date")
+        if getattr(history.index, "tz", None) is not None:
+            history.index = history.index.tz_convert(None)
+        frames.append(history)
+    
+    if not frames:
+        return pd.DataFrame()
+        
+    merged = pd.concat(frames, axis=1).sort_index()
+    if getattr(merged.index, "tz", None) is not None:
+        merged.index = merged.index.tz_convert(None)
+    merged = merged[~merged.index.duplicated(keep="last")]
+    merged = merged.ffill()
+    merged.index.name = "Date"
+    merged = merged.reindex(columns=columns)
+
+    if cache_path and not merged.empty:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(cache_path)), exist_ok=True)
+            merged.to_csv(cache_path)
+            print(f"Saved historical data to {cache_path}")
+        except Exception as e:
+            print(f"Failed to save cache: {e}")
+
+    return merged

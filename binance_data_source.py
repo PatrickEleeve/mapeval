@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 try:
     import requests
@@ -24,6 +24,28 @@ from urllib.parse import urlencode
 
 
 DEFAULT_BASE = "https://api1.binance.com"
+FALLBACK_BASES: Sequence[str] = (
+    DEFAULT_BASE,
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api.binance.com",
+)
+
+
+def _normalize_base_urls(base_url: str | Iterable[str] | None) -> List[str]:
+    if base_url is None:
+        sources: Iterable[str] = FALLBACK_BASES
+    elif isinstance(base_url, (list, tuple, set)):
+        sources = base_url
+    else:
+        sources = [base_url]
+    normalized: List[str] = []
+    for raw in sources:
+        text = str(raw).strip()
+        if not text:
+            continue
+        normalized.append(text.rstrip("/"))
+    return normalized or [DEFAULT_BASE.rstrip("/")]
 
 
 def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 10) -> Any:
@@ -48,20 +70,35 @@ def check_api(base_url: str = DEFAULT_BASE) -> Dict[str, Any]:
 
     Returns a dict with keys: reachable (bool), server_time (int|None), ping_ms (float|None), error (str|None)
     """
-    out = {"reachable": False, "server_time": None, "ping_ms": None, "error": None}
-    ping_url = base_url.rstrip("/") + "/api/v3/ping"
-    time_url = base_url.rstrip("/") + "/api/v3/time"
-    try:
-        t0 = time.perf_counter()
-        _http_get(ping_url, params=None)
-        t1 = time.perf_counter()
-        out["ping_ms"] = (t1 - t0) * 1000.0
-        time_json = _http_get(time_url)
-        out["server_time"] = int(time_json.get("serverTime"))
-        out["reachable"] = True
-    except Exception as exc:  # pragma: no cover - network dependent
-        out["error"] = str(exc)
-    return out
+    url_candidates = _normalize_base_urls(base_url)
+    last_error = None
+    for root in url_candidates:
+        ping_url = root + "/api/v3/ping"
+        time_url = root + "/api/v3/time"
+        try:
+            t0 = time.perf_counter()
+            _http_get(ping_url, params=None)
+            t1 = time.perf_counter()
+            ping_ms = (t1 - t0) * 1000.0
+            time_json = _http_get(time_url)
+            server_time = int(time_json.get("serverTime"))
+            # Only return success after both ping and time checks pass
+            return {
+                "reachable": True,
+                "server_time": server_time,
+                "ping_ms": ping_ms,
+                "error": None,
+            }
+        except Exception as exc:  # pragma: no cover - network dependent
+            last_error = exc
+            continue
+    # All endpoints failed - return failure state with last error
+    return {
+        "reachable": False,
+        "server_time": None,
+        "ping_ms": None,
+        "error": str(last_error) if last_error is not None else None,
+    }
 
 
 def fetch_klines(
@@ -70,24 +107,35 @@ def fetch_klines(
     start_str: Optional[str] = None,
     end_str: Optional[str] = None,
     limit: int = 1000,
-    base_url: str = DEFAULT_BASE,
+    base_url: str | Iterable[str] = DEFAULT_BASE,
 ) -> List[List[Any]]:
     """Fetch klines (candles) from Binance. Returns raw kline arrays.
 
     Parameters follow Binance API naming. start_str/end_str can be ISO dates or timestamps in ms.
     """
-    klines_url = base_url.rstrip("/") + "/api/v3/klines"
     params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
     if start_str is not None:
         params["startTime"] = start_str
     if end_str is not None:
         params["endTime"] = end_str
-    data = _http_get(klines_url, params=params)
-    return data
+
+    errors: List[Exception] = []
+    for root in _normalize_base_urls(base_url):
+        klines_url = root + "/api/v3/klines"
+        try:
+            return _http_get(klines_url, params=params)
+        except Exception as exc:
+            errors.append(exc)
+            continue
+    if errors:
+        raise errors[-1]
+    raise RuntimeError("No Binance REST endpoints available for klines request.")
 
 
 def get_ticker_price(
-    symbol: Optional[str] = None, symbols: Optional[list[str]] = None, base_url: str = DEFAULT_BASE
+    symbol: Optional[str] = None,
+    symbols: Optional[list[str]] = None,
+    base_url: str | Iterable[str] = DEFAULT_BASE,
 ) -> Any:
     """Call /api/v3/ticker/price to get recent price(s).
 
@@ -97,21 +145,27 @@ def get_ticker_price(
     - If neither provided, returns all tickers (may be large).
     Note: `symbol` and `symbols` must not be used together as per Binance API.
     """
-    url = base_url.rstrip("/") + "/api/v3/ticker/price"
-    params: Dict[str, Any] = {}
     if symbol is not None and symbols is not None:
         raise ValueError("Provide only one of 'symbol' or 'symbols'")
+
+    params: Dict[str, Any] = {}
     if symbol is not None:
         params["symbol"] = symbol
-        return _http_get(url, params=params)
-    if symbols is not None:
-        # Binance expects a JSON array string for the `symbols` parameter.
-        # Use compact separators (no spaces) to avoid `400 Bad Request` caused by
-        # space characters after commas when the list is URL-encoded.
+    elif symbols is not None:
         params["symbols"] = json.dumps(symbols, separators=(",", ":"))
-        return _http_get(url, params=params)
-    # no parameters -> returns all
-    return _http_get(url, params=None)
+
+    errors: List[Exception] = []
+    for root in _normalize_base_urls(base_url):
+        url = root + "/api/v3/ticker/price"
+        try:
+            return _http_get(url, params=params or None)
+        except Exception as exc:
+            errors.append(exc)
+            continue
+
+    if errors:
+        raise errors[-1]
+    raise RuntimeError("No Binance REST endpoints available for ticker price request.")
 
 
 def get_futures_premium_index(

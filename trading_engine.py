@@ -68,6 +68,7 @@ class RealTimeTradingEngine:
         poll_interval_seconds: float,
         decision_interval_seconds: float,
         min_long_exposure: float = 0.0,
+        fee_rate: float = 0.0,
     ) -> None:
         self.market_data = market_data
         self.agent = agent
@@ -76,6 +77,7 @@ class RealTimeTradingEngine:
         self.poll_interval_seconds = poll_interval_seconds
         self.decision_interval_seconds = decision_interval_seconds
         self.min_long_exposure = max(0.0, float(min_long_exposure))
+        self.fee_rate = max(0.0, float(fee_rate))
         self.trade_log: List[Dict[str, Any]] = []
         self.decision_log: List[Dict[str, Any]] = []
         self.equity_history: List[Dict[str, Any]] = []
@@ -263,13 +265,17 @@ class RealTimeTradingEngine:
                 leverage=leverage,
                 opened_at=timestamp,
             )
+            fee = price * abs(target_quantity) * self.fee_rate
+            self.account.balance -= fee
+            self.account.realized_pnl -= fee
             trade_entry = {
                 "timestamp": timestamp.isoformat(),
                 "symbol": symbol,
                 "action": "open",
                 "quantity": target_quantity,
                 "price": price,
-                "realized_pnl": 0.0,
+                "realized_pnl": -fee,
+                "fee": fee,
             }
             self.trade_log.append(trade_entry)
             if reporter is not None and hasattr(reporter, "record_trade"):
@@ -278,16 +284,18 @@ class RealTimeTradingEngine:
 
         existing_qty = position.quantity
         if abs(target_quantity) < 1e-8:
+            fee = price * abs(existing_qty) * self.fee_rate
             realized = (price - position.entry_price) * existing_qty
-            self.account.balance += realized
-            self.account.realized_pnl += realized
+            self.account.balance += realized - fee
+            self.account.realized_pnl += realized - fee
             trade_entry = {
                 "timestamp": timestamp.isoformat(),
                 "symbol": symbol,
                 "action": "close",
                 "quantity": existing_qty,
                 "price": price,
-                "realized_pnl": realized,
+                "realized_pnl": realized - fee,
+                "fee": fee,
             }
             self.trade_log.append(trade_entry)
             del self.account.positions[symbol]
@@ -298,24 +306,29 @@ class RealTimeTradingEngine:
         if existing_qty * target_quantity > 0:
             if abs(target_quantity) > abs(existing_qty):
                 delta_qty = target_quantity - existing_qty
+                fee = price * abs(delta_qty) * self.fee_rate
                 weighted_notional = position.entry_price * existing_qty + price * delta_qty
                 position.quantity = target_quantity
                 position.entry_price = weighted_notional / target_quantity
                 position.leverage = self._compute_position_leverage(price, target_quantity)
+                self.account.balance -= fee
+                self.account.realized_pnl -= fee
                 trade_entry = {
                     "timestamp": timestamp.isoformat(),
                     "symbol": symbol,
                     "action": "increase",
                     "quantity": delta_qty,
                     "price": price,
-                    "realized_pnl": 0.0,
+                    "realized_pnl": -fee,
+                    "fee": fee,
                 }
                 self.trade_log.append(trade_entry)
             else:
                 closed_qty = existing_qty - target_quantity
+                fee = price * abs(closed_qty) * self.fee_rate
                 realized = (price - position.entry_price) * closed_qty
-                self.account.balance += realized
-                self.account.realized_pnl += realized
+                self.account.balance += realized - fee
+                self.account.realized_pnl += realized - fee
                 position.quantity = target_quantity
                 trade_entry = {
                     "timestamp": timestamp.isoformat(),
@@ -323,7 +336,8 @@ class RealTimeTradingEngine:
                     "action": "reduce",
                     "quantity": closed_qty,
                     "price": price,
-                    "realized_pnl": realized,
+                    "realized_pnl": realized - fee,
+                    "fee": fee,
                 }
                 self.trade_log.append(trade_entry)
                 if abs(position.quantity) < 1e-8:
@@ -334,21 +348,24 @@ class RealTimeTradingEngine:
             return
 
         # Direction flip: close prior position, open new one.
+        fee_close = price * abs(existing_qty) * self.fee_rate
         realized = (price - position.entry_price) * existing_qty
-        self.account.balance += realized
-        self.account.realized_pnl += realized
+        self.account.balance += realized - fee_close
+        self.account.realized_pnl += realized - fee_close
         trade_entry_close = {
             "timestamp": timestamp.isoformat(),
             "symbol": symbol,
             "action": "reverse_close",
             "quantity": existing_qty,
             "price": price,
-            "realized_pnl": realized,
+            "realized_pnl": realized - fee_close,
+            "fee": fee_close,
         }
         self.trade_log.append(trade_entry_close)
         if reporter is not None and hasattr(reporter, "record_trade"):
             reporter.record_trade(trade_entry_close)
 
+        fee_open = price * abs(target_quantity) * self.fee_rate
         leverage = self._compute_position_leverage(price, target_quantity)
         self.account.positions[symbol] = FuturesPosition(
             symbol=symbol,
@@ -357,13 +374,16 @@ class RealTimeTradingEngine:
             leverage=leverage,
             opened_at=timestamp,
         )
+        self.account.balance -= fee_open
+        self.account.realized_pnl -= fee_open
         trade_entry_open = {
             "timestamp": timestamp.isoformat(),
             "symbol": symbol,
             "action": "reverse_open",
             "quantity": target_quantity,
             "price": price,
-            "realized_pnl": 0.0,
+            "realized_pnl": -fee_open,
+            "fee": fee_open,
         }
         self.trade_log.append(trade_entry_open)
         if reporter is not None and hasattr(reporter, "record_trade"):
@@ -376,7 +396,7 @@ class RealTimeTradingEngine:
         if equity <= 0:
             return self.max_leverage
         leverage = notional / equity
-        return max(1.0, min(self.max_leverage, leverage))
+        return min(self.max_leverage, leverage)
 
     def execute_trading_plan(self, plan: Dict[str, Any], *, source: str = "external_command", reporter: Optional[Any] = None) -> Dict[str, Any]:
         timestamp = pd.Timestamp.utcnow().floor("s")

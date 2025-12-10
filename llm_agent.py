@@ -21,23 +21,18 @@ _SYSTEM_PROMPT_TEMPLATE = (
     "and controlled drawdowns.\n\n"
     "**Available tools**\n"
     "- get_historical_prices(symbol, end_date, bars): retrieve the latest price history window.\n"
-    "- calculate_moving_average(symbol, end_date, window_size): compute moving averages.\n"
-    "- calculate_volatility(symbol, end_date, window_size): estimate historical volatility.\n"
+    "- Pre-calculated indicators: RSI (14), MACD (12,26,9), MA (20/50) Trends, Volatility (20).\n"
     "- get_funding_rate(symbol): recent futures funding rate (per 8h), if available.\n\n"
-    "**Exposure scale**\n"
-    "- Exposure values are leverage multiples of account equity (not dollar amounts).\n"
-    "- Example: 1.0 means a position whose notional equals account equity; 5.0 means controlling five times equity.\n"
-    "- Use materially sized exposures (typically 2.0x–20.0x) when you have conviction; return values near 0 only when you "
-    "intentionally want to stay neutral. Do not be afraid to use leverage up to the limit if the signal is strong. "
-    "1.0x is considered conservative/low leverage.\n\n"
     "**Guidelines**\n"
     "1. Evaluate recent price action and volatility.\n"
-    "2. Select leverage exposures for each contract; positive values are long, negative values are short.\n"
-    "3. Keep each exposure within +/-{leverage}x and ensure the sum of absolute exposures does not exceed {leverage}.\n"
-    "4. Aggressively seize opportunities with higher leverage when market conditions permit.\n\n"
+    "2. For each contract, determine:\n"
+    "   - Allocation: Percent of total equity to use (0.0 to 1.0).\n"
+    "   - Leverage: Leverage multiplier (1x to 20x or more).\n"
+    "   - Side: 'long' or 'short'.\n"
+    "3. Aggressively seize opportunities with higher leverage (e.g., 2x-10x) when market conditions permit.\n\n"
     "**Output format**\n"
-    'Respond strictly in JSON: {{"reasoning": "brief analysis ...", "exposure": {{"BTCUSDT": <float>, "ETHUSDT": <float>}}}}. '
-    "Numbers represent leverage multiples of account equity."
+    'Respond strictly in JSON: {{"reasoning": "brief analysis ...", "positions": {{"BTCUSDT": {{"allocation": 0.5, "leverage": 10, "side": "long"}}, "ETHUSDT": {{"allocation": 0.2, "leverage": 5, "side": "short"}}}}}}. \n'
+    "'allocation' is 0.0-1.0 (fraction of equity). 'leverage' is leverage multiplier (e.g. 10). 'side' is 'long' or 'short'."
 )
 
 
@@ -111,6 +106,38 @@ class LLMAgent:
         except Exception:
             funding_lines = []
         funding_hint = ", ".join(funding_lines) if funding_lines else "N/A"
+        
+        indicator_summaries: List[str] = []
+        for symbol in self.symbols:
+            parts = []
+            try:
+                rsi = getattr(available_tools, "calculate_rsi", lambda *a: None)(symbol, current_time)
+                macd = getattr(available_tools, "calculate_macd", lambda *a: None)(symbol, current_time)
+                ma20 = getattr(available_tools, "calculate_moving_average", lambda *a: None)(symbol, current_time, 20)
+                ma50 = getattr(available_tools, "calculate_moving_average", lambda *a: None)(symbol, current_time, 50)
+                vol = getattr(available_tools, "calculate_volatility", lambda *a: None)(symbol, current_time, 20)
+
+                if rsi is not None:
+                    state = "Overbought" if rsi > 70 else "Oversold" if rsi < 30 else "Neutral"
+                    parts.append(f"RSI(14)={rsi:.1f} ({state})")
+                if macd is not None:
+                    hist = macd.get("hist", 0.0)
+                    trend = "Bullish" if hist > 0 else "Bearish"
+                    parts.append(f"MACD(12,26,9) Hist={hist:.4f} ({trend})")
+                if ma20 is not None and ma50 is not None:
+                    trend = "Bullish" if ma20 > ma50 else "Bearish"
+                    parts.append(f"Trend(MA20/MA50)={trend} (MA20={ma20:.2f}, MA50={ma50:.2f})")
+                if vol is not None:
+                    parts.append(f"Vol(20)={vol:.4f}")
+
+            except Exception:
+                pass
+            
+            if parts:
+                indicator_summaries.append(f"{symbol}: " + ", ".join(parts))
+        
+        indicator_text = "\n".join(indicator_summaries) if indicator_summaries else "No indicators available."
+
         symbol_hint = ", ".join(self.symbols)
         timestamp_utc = (
             current_time.tz_localize("UTC") if current_time.tzinfo is None else current_time.tz_convert("UTC")
@@ -120,6 +147,7 @@ class LLMAgent:
             f"Tradable contracts: {symbol_hint}\n"
             "Recent closing prices (most recent 60 records):\n"
             f"{formatted_data}\n\n"
+            f"Technical Indicators:\n{indicator_text}\n\n"
             f"Recent funding rates (per 8h): {funding_hint}\n\n"
             f"Provide target leverage exposures within +/-{self.max_leverage}x."
         )
@@ -139,8 +167,27 @@ class LLMAgent:
 
                 response = self._client.chat.completions.create(**request_kwargs)
                 content = response.choices[0].message.content if response.choices else ""
+                print(f"\n[LLM RAW RESPONSE]\n{content}\n")
                 parsed = json.loads(content)
-                exposures = parsed.get("exposure", {})
+                
+                exposures = {}
+                raw_positions = parsed.get("positions", {})
+                if raw_positions and isinstance(raw_positions, dict):
+                    for sym, data in raw_positions.items():
+                        if not isinstance(data, dict):
+                            continue
+                        try:
+                            alloc = float(data.get("allocation", 0.0))
+                            lev = float(data.get("leverage", 1.0))
+                            side = str(data.get("side", "long")).lower()
+                            sign = 1.0 if side == "long" else -1.0
+                            exposures[sym] = alloc * lev * sign
+                        except Exception:
+                            continue
+                else:
+                    # Fallback to legacy format
+                    exposures = parsed.get("exposure", {})
+
                 self.last_reasoning = str(parsed.get("reasoning", ""))
                 sanitized = self._sanitize_exposures(exposures)
                 if sanitized is not None:
@@ -171,6 +218,11 @@ class LLMAgent:
                 return None
             value = max(-self.max_leverage, min(self.max_leverage, value))
             sanitized[symbol] = value
+
+        max_abs = max((abs(v) for v in sanitized.values()), default=0.0)
+        if max_abs > 0 and max_abs < 0.5:
+            print(f"[WARNING] LLM output very low leverage (max {max_abs:.4f}x). Auto-scaling by 10x (assuming % intent).")
+            sanitized = {k: v * 10.0 for k, v in sanitized.items()}
 
         total_abs = sum(abs(value) for value in sanitized.values())
         if total_abs > self.max_leverage and total_abs > 0.0:

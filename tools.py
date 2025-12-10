@@ -62,3 +62,47 @@ class FinancialTools:
         if returns.empty:
             return 0.0
         return float(returns.std())
+
+    def calculate_rsi(self, asset: str, end_date: pd.Timestamp, window_size: int = 14) -> Optional[float]:
+        """Calculate Relative Strength Index (RSI) using Wilder's smoothing."""
+        end = pd.to_datetime(end_date)
+        series = self._resolve_series(asset)
+        # Need enough data to stabilize EMA
+        lookback = window_size * 4
+        subset = series.loc[:end].tail(lookback)
+        if len(subset) < window_size + 1:
+            return None
+
+        delta = subset.diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+
+        avg_gain = gain.ewm(alpha=1 / window_size, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1 / window_size, adjust=False).mean()
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return float(rsi.iloc[-1])
+
+    def calculate_macd(
+        self, asset: str, end_date: pd.Timestamp, fast: int = 12, slow: int = 26, signal: int = 9
+    ) -> Optional[Dict[str, float]]:
+        """Calculate MACD, Signal line, and Histogram."""
+        end = pd.to_datetime(end_date)
+        series = self._resolve_series(asset)
+        lookback = slow * 4
+        subset = series.loc[:end].tail(lookback)
+        if len(subset) < slow:
+            return None
+
+        ema_fast = subset.ewm(span=fast, adjust=False).mean()
+        ema_slow = subset.ewm(span=slow, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+        hist = macd_line - signal_line
+
+        return {
+            "macd": float(macd_line.iloc[-1]),
+            "signal": float(signal_line.iloc[-1]),
+            "hist": float(hist.iloc[-1]),
+        }

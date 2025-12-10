@@ -81,6 +81,12 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum positive leverage exposure (fraction of equity) required for long trades.",
     )
     parser.add_argument(
+        "--fee-rate",
+        type=float,
+        default=TRADING_CONFIG.get("taker_fee_rate", 0.0005),
+        help="Taker fee rate (e.g. 0.0005 = 0.05%).",
+    )
+    parser.add_argument(
         "--ui",
         action="store_true",
         help="Enable rich-based TUI dashboard.",
@@ -152,6 +158,7 @@ def main() -> None:
         poll_interval_seconds=args.poll,
         decision_interval_seconds=args.decision,
         min_long_exposure=args.min_long_exposure,
+        fee_rate=args.fee_rate,
     )
 
     run_args = {
@@ -166,6 +173,7 @@ def main() -> None:
         "log_dir": args.log_dir,
         "min_long_exposure": args.min_long_exposure,
         "llm_provider": provider,
+        "fee_rate": args.fee_rate,
     }
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 

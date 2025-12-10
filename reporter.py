@@ -67,7 +67,8 @@ class RealTimeReporter:
         qty = trade.get("quantity")
         price = trade.get("price")
         pnl = trade.get("realized_pnl", 0.0)
-        print(f"[TRADE {ts}] {action} {sym} qty={qty:.4f} @ {price:.2f} pnl={pnl:.2f}")
+        fee = trade.get("fee", 0.0)
+        print(f"[TRADE {ts}] {action} {sym} qty={qty:.4f} @ {price:.2f} pnl={pnl:.2f} fee={fee:.2f}")
 
     def finalize(
         self,
@@ -317,6 +318,7 @@ class RichReporter(RealTimeReporter):
         qty = float(trade.get("quantity", 0))
         price = float(trade.get("price", 0))
         pnl = float(trade.get("realized_pnl", 0))
+        fee = float(trade.get("fee", 0))
         
         # Color coding
         if pnl > 0:
@@ -333,7 +335,7 @@ class RichReporter(RealTimeReporter):
         else:
             action_color = "cyan"
 
-        msg = f"[{ts}] [{action_color}]{action}[/{action_color}] {sym} Q:{qty:.4f} @ {price:.2f} PnL:{pnl_str}"
+        msg = f"[{ts}] [{action_color}]{action}[/{action_color}] {sym} Q:{qty:.4f} @ {price:.2f} PnL:{pnl_str} Fee:{fee:.2f}"
         self._recent_logs.append(msg)
         if len(self._recent_logs) > 20:
             self._recent_logs.pop(0)

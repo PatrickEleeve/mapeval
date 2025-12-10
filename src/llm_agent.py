@@ -371,3 +371,53 @@ class LLMAgent:
             "Deterministic fallback exposures derived from price momentum and relative volatility."
         )
         return sanitized
+
+
+@dataclass
+class BaselineAgent:
+    """Simple rule-based agent for benchmarking."""
+
+    strategy: str
+    symbols: List[str]
+    max_leverage: float = 1.0
+    last_reasoning: str = ""
+    last_sanitization_notes: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.last_reasoning = f"Baseline strategy: {self.strategy}"
+
+    def generate_trading_signal(
+        self,
+        current_time: pd.Timestamp,
+        market_data_slice: pd.DataFrame,
+        available_tools: Any,
+    ) -> Dict[str, float]:
+        exposures = {}
+        if self.strategy == "buy_hold":
+            # 1x total leverage split across symbols
+            weight = 1.0 / len(self.symbols) if self.symbols else 0.0
+            for sym in self.symbols:
+                exposures[sym] = weight
+
+        elif self.strategy == "random":
+            import random
+
+            for sym in self.symbols:
+                # Random exposure within max leverage
+                # Scale so total doesn't exceed max_leverage (roughly)
+                val = (random.random() - 0.5) * 2
+                exposures[sym] = val * (self.max_leverage / len(self.symbols))
+
+        elif self.strategy == "ma_crossover":
+            for sym in self.symbols:
+                short_ma = available_tools.calculate_moving_average(sym, current_time, 20)
+                long_ma = available_tools.calculate_moving_average(sym, current_time, 50)
+                if short_ma is not None and long_ma is not None:
+                    if short_ma > long_ma:
+                        exposures[sym] = 1.0 * (self.max_leverage / len(self.symbols))
+                    else:
+                        exposures[sym] = -1.0 * (self.max_leverage / len(self.symbols))
+                else:
+                    exposures[sym] = 0.0
+
+        return exposures

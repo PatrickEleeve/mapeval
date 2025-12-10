@@ -70,7 +70,6 @@ def check_api(base_url: str = DEFAULT_BASE) -> Dict[str, Any]:
 
     Returns a dict with keys: reachable (bool), server_time (int|None), ping_ms (float|None), error (str|None)
     """
-    out = {"reachable": False, "server_time": None, "ping_ms": None, "error": None}
     url_candidates = _normalize_base_urls(base_url)
     last_error = None
     for root in url_candidates:
@@ -80,17 +79,26 @@ def check_api(base_url: str = DEFAULT_BASE) -> Dict[str, Any]:
             t0 = time.perf_counter()
             _http_get(ping_url, params=None)
             t1 = time.perf_counter()
-            out["ping_ms"] = (t1 - t0) * 1000.0
+            ping_ms = (t1 - t0) * 1000.0
             time_json = _http_get(time_url)
-            out["server_time"] = int(time_json.get("serverTime"))
-            out["reachable"] = True
-            return out
+            server_time = int(time_json.get("serverTime"))
+            # Only return success after both ping and time checks pass
+            return {
+                "reachable": True,
+                "server_time": server_time,
+                "ping_ms": ping_ms,
+                "error": None,
+            }
         except Exception as exc:  # pragma: no cover - network dependent
             last_error = exc
             continue
-    if last_error is not None:
-        out["error"] = str(last_error)
-    return out
+    # All endpoints failed - return failure state with last error
+    return {
+        "reachable": False,
+        "server_time": None,
+        "ping_ms": None,
+        "error": str(last_error) if last_error is not None else None,
+    }
 
 
 def fetch_klines(

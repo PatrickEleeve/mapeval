@@ -33,12 +33,13 @@ class AccountState:
     equity: float = 0.0
     margin_used: float = 0.0
     available_margin: float = 0.0
+    maintenance_margin_req: float = 0.0
 
     def __post_init__(self) -> None:
         self.equity = self.balance
         self.available_margin = self.balance
 
-    def mark_to_market(self, prices: Dict[str, float], max_leverage: float) -> None:
+    def mark_to_market(self, prices: Dict[str, float], max_leverage: float, maintenance_rate: float = 0.0) -> None:
         unrealized = 0.0
         total_notional = 0.0
         for symbol, position in self.positions.items():
@@ -53,6 +54,7 @@ class AccountState:
             self.margin_used = total_notional / max_leverage
         else:
             self.margin_used = 0.0
+        self.maintenance_margin_req = total_notional * maintenance_rate
         self.available_margin = self.equity - self.margin_used
 
 
@@ -70,6 +72,9 @@ class RealTimeTradingEngine:
         min_long_exposure: float = 0.0,
         per_symbol_max_exposure: Optional[float] = None,
         max_exposure_delta: Optional[float] = None,
+        commission_rate: float = 0.0,
+        slippage: float = 0.0,
+        liquidation_threshold: float = 0.0,
     ) -> None:
         self.market_data = market_data
         self.agent = agent
@@ -78,6 +83,9 @@ class RealTimeTradingEngine:
         self.poll_interval_seconds = poll_interval_seconds
         self.decision_interval_seconds = decision_interval_seconds
         self.min_long_exposure = max(0.0, float(min_long_exposure))
+        self.commission_rate = max(0.0, float(commission_rate))
+        self.slippage = max(0.0, float(slippage))
+        self.liquidation_threshold = max(0.0, float(liquidation_threshold))
         per_symbol_cap = per_symbol_max_exposure if per_symbol_max_exposure is not None else self.max_leverage
         if self.max_leverage > 0.0 and per_symbol_cap is not None:
             per_symbol_cap = min(float(per_symbol_cap), self.max_leverage)
@@ -101,6 +109,10 @@ class RealTimeTradingEngine:
             loop_ts = pd.Timestamp.utcnow().floor("s")
             try:
                 prices = self.market_data.fetch_latest_prices()
+            except StopIteration:
+                if reporter is not None:
+                    reporter.record_warning(loop_ts, "Backtest finished (StopIteration).")
+                break
             except RuntimeError as exc:
                 if reporter is not None:
                     reporter.record_warning(loop_ts, str(exc))
@@ -110,7 +122,13 @@ class RealTimeTradingEngine:
                     continue
 
             self.market_data.append_prices(prices, timestamp=loop_ts)
-            self.account.mark_to_market(prices, self.max_leverage)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+            
+            if self._check_liquidation(prices, loop_ts):
+                if reporter is not None:
+                    reporter.record_warning(loop_ts, "Account liquidated due to insufficient margin.")
+                break
+
             self.equity_history.append(
                 {
                     "timestamp": loop_ts,
@@ -216,7 +234,7 @@ class RealTimeTradingEngine:
             target_notional = target_exposure * equity
             target_quantity = target_notional / price
             self._rebalance_position(symbol, target_quantity, price, timestamp)
-        self.account.mark_to_market(prices, self.max_leverage)
+        self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
         self._last_applied_exposures = self._current_exposures(prices)
         self._last_validation_notes = notes
         return sanitized
@@ -350,14 +368,25 @@ class RealTimeTradingEngine:
         timestamp: pd.Timestamp,
     ) -> None:
         position = self.account.positions.get(symbol)
+
+        def calculate_execution(qty: float, base_price: float) -> tuple[float, float]:
+            if qty > 0:
+                exec_price = base_price * (1 + self.slippage)
+            else:
+                exec_price = base_price * (1 - self.slippage)
+            commission = abs(qty * exec_price) * self.commission_rate
+            return exec_price, commission
+
         if position is None:
             if abs(target_quantity) < 1e-8:
                 return
-            leverage = self._compute_position_leverage(price, target_quantity)
+            exec_price, comm = calculate_execution(target_quantity, price)
+            self.account.balance -= comm
+            leverage = self._compute_position_leverage(exec_price, target_quantity)
             self.account.positions[symbol] = FuturesPosition(
                 symbol=symbol,
                 quantity=target_quantity,
-                entry_price=price,
+                entry_price=exec_price,
                 leverage=leverage,
                 opened_at=timestamp,
             )
@@ -367,25 +396,29 @@ class RealTimeTradingEngine:
                     "symbol": symbol,
                     "action": "open",
                     "quantity": target_quantity,
-                    "price": price,
-                    "realized_pnl": 0.0,
+                    "price": exec_price,
+                    "commission": comm,
+                    "realized_pnl": -comm,
                 }
             )
             return
 
         existing_qty = position.quantity
         if abs(target_quantity) < 1e-8:
-            realized = (price - position.entry_price) * existing_qty
-            self.account.balance += realized
-            self.account.realized_pnl += realized
+            delta_qty = -existing_qty
+            exec_price, comm = calculate_execution(delta_qty, price)
+            realized = (exec_price - position.entry_price) * existing_qty
+            self.account.balance += realized - comm
+            self.account.realized_pnl += realized - comm
             self.trade_log.append(
                 {
                     "timestamp": timestamp.isoformat(),
                     "symbol": symbol,
                     "action": "close",
                     "quantity": existing_qty,
-                    "price": price,
-                    "realized_pnl": realized,
+                    "price": exec_price,
+                    "commission": comm,
+                    "realized_pnl": realized - comm,
                 }
             )
             del self.account.positions[symbol]
@@ -394,7 +427,9 @@ class RealTimeTradingEngine:
         if existing_qty * target_quantity > 0:
             if abs(target_quantity) > abs(existing_qty):
                 delta_qty = target_quantity - existing_qty
-                weighted_notional = position.entry_price * existing_qty + price * delta_qty
+                exec_price, comm = calculate_execution(delta_qty, price)
+                self.account.balance -= comm
+                weighted_notional = position.entry_price * existing_qty + exec_price * delta_qty
                 position.quantity = target_quantity
                 position.entry_price = weighted_notional / target_quantity
                 position.leverage = self._compute_position_leverage(price, target_quantity)
@@ -404,15 +439,18 @@ class RealTimeTradingEngine:
                         "symbol": symbol,
                         "action": "increase",
                         "quantity": delta_qty,
-                        "price": price,
-                        "realized_pnl": 0.0,
+                        "price": exec_price,
+                        "commission": comm,
+                        "realized_pnl": -comm,
                     }
                 )
             else:
                 closed_qty = existing_qty - target_quantity
-                realized = (price - position.entry_price) * closed_qty
-                self.account.balance += realized
-                self.account.realized_pnl += realized
+                delta_qty = -closed_qty # Selling if long, Buying if short
+                exec_price, comm = calculate_execution(target_quantity - existing_qty, price)
+                realized = (exec_price - position.entry_price) * closed_qty
+                self.account.balance += realized - comm
+                self.account.realized_pnl += realized - comm
                 position.quantity = target_quantity
                 self.trade_log.append(
                     {
@@ -420,8 +458,9 @@ class RealTimeTradingEngine:
                         "symbol": symbol,
                         "action": "reduce",
                         "quantity": closed_qty,
-                        "price": price,
-                        "realized_pnl": realized,
+                        "price": exec_price,
+                        "commission": comm,
+                        "realized_pnl": realized - comm,
                     }
                 )
                 if abs(position.quantity) < 1e-8:
@@ -429,24 +468,30 @@ class RealTimeTradingEngine:
             return
 
         # Direction flip: close prior position, open new one.
-        realized = (price - position.entry_price) * existing_qty
-        self.account.balance += realized
-        self.account.realized_pnl += realized
+        delta_close = -existing_qty
+        exec_close, comm_close = calculate_execution(delta_close, price)
+        realized = (exec_close - position.entry_price) * existing_qty
+        self.account.balance += realized - comm_close
+        self.account.realized_pnl += realized - comm_close
         self.trade_log.append(
             {
                 "timestamp": timestamp.isoformat(),
                 "symbol": symbol,
                 "action": "reverse_close",
                 "quantity": existing_qty,
-                "price": price,
-                "realized_pnl": realized,
+                "price": exec_close,
+                "commission": comm_close,
+                "realized_pnl": realized - comm_close,
             }
         )
-        leverage = self._compute_position_leverage(price, target_quantity)
+        
+        exec_open, comm_open = calculate_execution(target_quantity, price)
+        self.account.balance -= comm_open
+        leverage = self._compute_position_leverage(exec_open, target_quantity)
         self.account.positions[symbol] = FuturesPosition(
             symbol=symbol,
             quantity=target_quantity,
-            entry_price=price,
+            entry_price=exec_open,
             leverage=leverage,
             opened_at=timestamp,
         )
@@ -456,10 +501,41 @@ class RealTimeTradingEngine:
                 "symbol": symbol,
                 "action": "reverse_open",
                 "quantity": target_quantity,
-                "price": price,
-                "realized_pnl": 0.0,
+                "price": exec_open,
+                "commission": comm_open,
+                "realized_pnl": -comm_open,
             }
         )
+
+    def _check_liquidation(self, prices: Dict[str, float], timestamp: pd.Timestamp) -> bool:
+        if self.account.equity <= 0 or (self.account.maintenance_margin_req > 0 and self.account.equity < self.account.maintenance_margin_req):
+            for symbol, position in list(self.account.positions.items()):
+                qty = -position.quantity
+                if qty > 0:
+                    price = prices.get(symbol, position.entry_price) * (1 + self.slippage)
+                else:
+                    price = prices.get(symbol, position.entry_price) * (1 - self.slippage)
+                
+                commission = abs(qty * price) * self.commission_rate
+                realized = (price - position.entry_price) * position.quantity
+                self.account.balance += realized - commission
+                self.account.realized_pnl += realized - commission
+                
+                self.trade_log.append({
+                    "timestamp": timestamp.isoformat(),
+                    "symbol": symbol,
+                    "action": "liquidation",
+                    "quantity": position.quantity,
+                    "price": price,
+                    "commission": commission,
+                    "realized_pnl": realized - commission
+                })
+            self.account.positions.clear()
+            self.account.equity = self.account.balance
+            self.account.margin_used = 0
+            self.account.available_margin = 0
+            return True
+        return False
 
     def _compute_position_leverage(self, price: float, quantity: float) -> float:
         equity = max(self.account.equity, 1e-6)
@@ -502,7 +578,7 @@ class RealTimeTradingEngine:
                 )
                 return response
         self.market_data.append_prices(prices, timestamp=timestamp)
-        self.account.mark_to_market(prices, self.max_leverage)
+        self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
 
         current_exposures = self._current_exposures(prices)
         requested_exposures = current_exposures.copy()
@@ -643,7 +719,7 @@ class RealTimeTradingEngine:
             self._rebalance_position(symbol, target_quantity, price, timestamp)
             applied_exposures[symbol] = target_exposure
 
-        self.account.mark_to_market(prices, self.max_leverage)
+        self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
         self._last_applied_exposures = self._current_exposures(prices)
         self._last_validation_notes = engine_notes
         response = {

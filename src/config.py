@@ -81,6 +81,9 @@ TRADING_CONFIG = {
     "max_leverage": 30,
     "per_symbol_max_exposure": 5.0,
     "max_exposure_delta": 2.0,
+    "commission_rate": 0.0005,
+    "slippage": 0.0005,
+    "liquidation_threshold": 0.05,
     "duration_seconds": {
         "1h": 60 * 60,
         "6h": 6 * 60 * 60,

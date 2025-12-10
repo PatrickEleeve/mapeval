@@ -10,12 +10,13 @@ always have a clean pandas DataFrame to work with.
 from __future__ import annotations
 
 import math
-from typing import Dict, Final, Iterable, List, Optional
+from typing import Dict, Final, Iterable, List, Optional, Sequence
 
 import pandas as pd
 
 from binance_data_source import (
     DEFAULT_BASE,
+    FALLBACK_BASES,
     check_api,
     fetch_klines,
     get_ticker_price,
@@ -26,18 +27,6 @@ from binance_ws import BinanceSpotWS
 
 _START_DATE: Final = "2015-01-01"
 _END_DATE: Final = "2024-12-31"
-_SYNTHETIC_BASES: Dict[str, float] = {
-    "BTCUSDT": 25_000.0,
-    "ETHUSDT": 1_800.0,
-    "BNBUSDT": 350.0,
-    "XRPUSDT": 0.55,
-    "SOLUSDT": 110.0,
-    "TRXUSDT": 0.12,
-    "DOGEUSDT": 0.1,
-    "ADAUSDT": 0.45,
-    "SUIUSDT": 1.2,
-    "AAVEUSDT": 120.0,
-}
 _INTERVAL_TO_FREQ: Dict[str, str] = {
     "1m": "1min",
     "3m": "3min",
@@ -49,20 +38,6 @@ _INTERVAL_TO_FREQ: Dict[str, str] = {
     "4h": "4h",
     "1d": "B",
 }
-
-
-def _generate_price_series(dates: Iterable[pd.Timestamp], initial_price: float, drift: float) -> List[float]:
-    """Generate a smooth synthetic price path with mild seasonality."""
-    prices: List[float] = []
-    price = initial_price
-    for idx, _ in enumerate(dates):
-        seasonal = 0.0004 * math.sin(2.0 * math.pi * idx / 126.0)
-        cycle = 0.0003 * math.sin(2.0 * math.pi * idx / 252.0 + 1.2)
-        short_cycle = 0.0002 * math.sin(2.0 * math.pi * idx / 21.0 + 0.7)
-        growth = drift + seasonal + cycle + short_cycle
-        price *= 1.0 + growth
-        prices.append(round(price, 4))
-    return prices
 
 
 def _klines_to_df(klines: List[List]) -> pd.DataFrame:
@@ -80,24 +55,12 @@ def _interval_to_freq(interval: str) -> str:
     return _INTERVAL_TO_FREQ.get(interval, "T")
 
 
-def _generate_synthetic_history(symbol: str, interval: str, lookback: int) -> pd.DataFrame:
-    freq = _interval_to_freq(interval)
-    dates = pd.date_range(end=pd.Timestamp.utcnow().floor("s"), periods=lookback, freq=freq)
-    base_price = _SYNTHETIC_BASES.get(symbol, 100.0)
-    drift = 0.0001 if "USDT" in symbol else 0.00005
-    closes = _generate_price_series(dates, initial_price=base_price, drift=drift)
-    return pd.DataFrame({"Date": dates, "Close": closes})
-
-
 def _fetch_symbol_history(symbol: str, interval: str, lookback: int, base_url: str) -> pd.DataFrame:
-    try:
-        klines = fetch_klines(symbol=symbol, interval=interval, limit=lookback, base_url=base_url)
-        df = _klines_to_df(klines)
-        if df.empty:
-            raise ValueError("No kline data returned.")
-        return df
-    except Exception:
-        return _generate_synthetic_history(symbol, interval, lookback)
+    klines = fetch_klines(symbol=symbol, interval=interval, limit=lookback, base_url=base_url)
+    df = _klines_to_df(klines)
+    if df.empty:
+        raise ValueError("No kline data returned.")
+    return df
 
 
 class RealTimeMarketData:
@@ -249,40 +212,3 @@ def _attempt_binance_load(symbol: str, interval: str = "1d") -> pd.DataFrame:
     df = _klines_to_df(klines)
     df = df.drop_duplicates(subset=["Date"]).sort_values("Date")
     return df
-
-
-def load_market_data() -> pd.DataFrame:
-    """Legacy helper that returns daily synthetic close prices for SPY/AGG."""
-    try:
-        btc = _attempt_binance_load("BTCUSDT", interval="1d")
-        eth = _attempt_binance_load("ETHUSDT", interval="1d")
-        merged = pd.merge_asof(
-            btc.sort_values("Date"),
-            eth.sort_values("Date"),
-            on="Date",
-            direction="nearest",
-            tolerance=pd.Timedelta("1D"),
-            suffixes=("_BTC", "_ETH"),
-        )
-        if len(merged) < 252:
-            raise ValueError("Insufficient Binance history; falling back to synthetic data.")
-        result = pd.DataFrame(
-            {
-                "Date": merged["Date"],
-                "SPY_Close": merged["Close_BTC"],
-                "AGG_Close": merged["Close_ETH"],
-            }
-        )
-        return result
-    except Exception:
-        dates = pd.date_range(_START_DATE, _END_DATE, freq="B")
-        spy_prices = _generate_price_series(dates, initial_price=200.0, drift=0.00025)
-        agg_prices = _generate_price_series(dates, initial_price=100.0, drift=0.00012)
-        data = pd.DataFrame(
-            {
-                "Date": dates,
-                "SPY_Close": spy_prices,
-                "AGG_Close": agg_prices,
-            }
-        )
-        return data
