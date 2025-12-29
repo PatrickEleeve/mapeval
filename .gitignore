@@ -1,8 +1,74 @@
-*.json
-*.jsonl
-./logs
-./__pycache__/
-*.pyc
-.vscode/
-.DS_Store
+# Environment and secrets
 .env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs (keep directory but ignore contents)
+logs/*.json
+logs/*.jsonl
+src/logs/*.json
+src/logs/*.jsonl
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# MyPy
+.mypy_cache/
+
+# Local cache
+.cache/
+
+# Coverage
+coverage.xml
+
+# Config (keep example)
+config.yaml
+config.yml
+mapeval.yaml
+mapeval.yml

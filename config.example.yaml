@@ -1,0 +1,71 @@
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - SOLUSDT
+  - TRXUSDT
+  - DOGEUSDT
+  - ADAUSDT
+  - SUIUSDT
+  - AAVEUSDT
+
+default_provider: openai
+duration: "1h"
+
+trading:
+  initial_capital: 100000.0
+  max_leverage: 30.0
+  per_symbol_max_exposure: 5.0
+  max_exposure_delta: 2.0
+  poll_interval_seconds: 5.0
+  decision_interval_seconds: 180.0
+  taker_fee_rate: 0.0005
+  min_long_exposure: 0.0
+  history_interval: "1m"
+  history_lookback: 500
+
+risk:
+  max_drawdown: 0.20
+  max_daily_loss: 0.05
+  max_position_duration_hours: 4.0
+  max_correlation: 0.85
+  max_single_loss: 0.02
+  min_equity_floor: 0.10
+  max_consecutive_losses: 5
+  cooldown_after_loss_seconds: 300
+  enable_risk_manager: true
+
+cache:
+  enabled: true
+  cache_dir: ".cache/klines"
+  max_age_hours: 24
+  cleanup_on_start: false
+
+logging:
+  level: INFO
+  json_output: false
+  log_file: null
+  structured: true
+
+providers:
+  openai:
+    model_name: gpt-4-turbo
+    temperature: 0.2
+    supports_json_response_format: true
+    timeout_seconds: 60
+
+  deepseek:
+    model_name: deepseek-chat
+    temperature: 0.2
+    base_url: https://api.deepseek.com
+    supports_json_response_format: true
+    timeout_seconds: 60
+
+  qwen:
+    model_name: qwen3-max
+    temperature: 0.2
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    supports_json_response_format: true
+    timeout_seconds: 60
+

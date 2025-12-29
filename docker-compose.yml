@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  mapeval:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mapeval-trading
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - LOG_LEVEL=INFO
+      - LOG_JSON=false
+    volumes:
+      - ./logs:/app/logs
+      - ./.cache:/app/.cache
+    restart: unless-stopped
+    command: ["--duration", "1h", "--symbols", "BTCUSDT", "ETHUSDT", "--llm-provider", "openai"]
+
+  mapeval-deepseek:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mapeval-deepseek
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./logs:/app/logs
+      - ./.cache:/app/.cache
+    restart: unless-stopped
+    command: ["--duration", "1h", "--symbols", "BTCUSDT", "ETHUSDT", "--llm-provider", "deepseek"]
+    profiles:
+      - deepseek
+
+  mapeval-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mapeval-test
+    environment:
+      - PYTHONPATH=/app/src
+    entrypoint: ["pytest"]
+    command: ["tests/", "-v", "--tb=short"]
+    profiles:
+      - test
+

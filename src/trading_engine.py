@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from tools import FinancialTools
+from portfolio_risk_controller import PortfolioRiskController, PortfolioRiskLimits
 
 
 @dataclass
@@ -75,6 +76,10 @@ class RealTimeTradingEngine:
         commission_rate: float = 0.0,
         slippage: float = 0.0,
         liquidation_threshold: float = 0.0,
+        gross_leverage_cap: Optional[float] = None,
+        net_exposure_cap: Optional[float] = None,
+        max_open_positions: Optional[int] = None,
+        max_turnover_per_step: Optional[float] = None,
     ) -> None:
         self.market_data = market_data
         self.agent = agent
@@ -101,6 +106,19 @@ class RealTimeTradingEngine:
             symbol: 0.0 for symbol in getattr(self.market_data, "symbols", [])
         }
         self._last_validation_notes: List[str] = []
+        
+        portfolio_limits = PortfolioRiskLimits(
+            gross_leverage_cap=gross_leverage_cap if gross_leverage_cap is not None else self.max_leverage,
+            net_exposure_cap=net_exposure_cap if net_exposure_cap is not None else self.max_leverage,
+            max_open_positions=max_open_positions if max_open_positions is not None else len(getattr(self.market_data, "symbols", [])),
+            max_turnover_per_step=max_turnover_per_step if max_turnover_per_step is not None else self.max_leverage * 2,
+        )
+        self.portfolio_risk = PortfolioRiskController(
+            limits=portfolio_limits,
+            initial_margin_rate=1.0 / self.max_leverage if self.max_leverage > 0 else 1.0,
+            maintenance_margin_rate=self.liquidation_threshold,
+        )
+        self._liquidation_audit: Optional[Dict[str, Any]] = None
 
     def run(self, duration_seconds: float, reporter: Optional[Any] = None) -> Dict[str, Any]:
         end_time = time.time() + duration_seconds
@@ -358,7 +376,27 @@ class RealTimeTradingEngine:
                         "notes": notes,
                     }
 
-        return {"valid": True, "exposures": sanitized, "notes": notes}
+        portfolio_result = self.portfolio_risk.validate_portfolio_constraints(
+            proposed_exposures=sanitized,
+            current_exposures=previous_exposures,
+            allow_rescale=allow_rescale,
+        )
+        if not portfolio_result["valid"]:
+            return {
+                "valid": False,
+                "code": portfolio_result.get("code", "PORTFOLIO_CONSTRAINT"),
+                "message": portfolio_result.get("message", "Portfolio constraint violated"),
+                "notes": notes + portfolio_result.get("notes", []),
+            }
+        sanitized = portfolio_result["exposures"]
+        notes.extend(portfolio_result.get("notes", []))
+
+        return {
+            "valid": True,
+            "exposures": sanitized,
+            "notes": notes,
+            "portfolio_metrics": portfolio_result.get("metrics", {}),
+        }
 
     def _rebalance_position(
         self,
@@ -369,18 +407,20 @@ class RealTimeTradingEngine:
     ) -> None:
         position = self.account.positions.get(symbol)
 
-        def calculate_execution(qty: float, base_price: float) -> tuple[float, float]:
+        def calculate_execution(qty: float, base_price: float) -> tuple[float, float, float]:
             if qty > 0:
                 exec_price = base_price * (1 + self.slippage)
             else:
                 exec_price = base_price * (1 - self.slippage)
             commission = abs(qty * exec_price) * self.commission_rate
-            return exec_price, commission
+            slippage_cost = abs(qty * base_price * self.slippage)
+            self.portfolio_risk.accumulate_costs(commission, slippage_cost)
+            return exec_price, commission, slippage_cost
 
         if position is None:
             if abs(target_quantity) < 1e-8:
                 return
-            exec_price, comm = calculate_execution(target_quantity, price)
+            exec_price, comm, slip = calculate_execution(target_quantity, price)
             self.account.balance -= comm
             leverage = self._compute_position_leverage(exec_price, target_quantity)
             self.account.positions[symbol] = FuturesPosition(
@@ -398,6 +438,7 @@ class RealTimeTradingEngine:
                     "quantity": target_quantity,
                     "price": exec_price,
                     "commission": comm,
+                    "slippage_cost": slip,
                     "realized_pnl": -comm,
                 }
             )
@@ -406,7 +447,7 @@ class RealTimeTradingEngine:
         existing_qty = position.quantity
         if abs(target_quantity) < 1e-8:
             delta_qty = -existing_qty
-            exec_price, comm = calculate_execution(delta_qty, price)
+            exec_price, comm, slip = calculate_execution(delta_qty, price)
             realized = (exec_price - position.entry_price) * existing_qty
             self.account.balance += realized - comm
             self.account.realized_pnl += realized - comm
@@ -418,6 +459,7 @@ class RealTimeTradingEngine:
                     "quantity": existing_qty,
                     "price": exec_price,
                     "commission": comm,
+                    "slippage_cost": slip,
                     "realized_pnl": realized - comm,
                 }
             )
@@ -427,7 +469,7 @@ class RealTimeTradingEngine:
         if existing_qty * target_quantity > 0:
             if abs(target_quantity) > abs(existing_qty):
                 delta_qty = target_quantity - existing_qty
-                exec_price, comm = calculate_execution(delta_qty, price)
+                exec_price, comm, slip = calculate_execution(delta_qty, price)
                 self.account.balance -= comm
                 weighted_notional = position.entry_price * existing_qty + exec_price * delta_qty
                 position.quantity = target_quantity
@@ -441,13 +483,14 @@ class RealTimeTradingEngine:
                         "quantity": delta_qty,
                         "price": exec_price,
                         "commission": comm,
+                        "slippage_cost": slip,
                         "realized_pnl": -comm,
                     }
                 )
             else:
                 closed_qty = existing_qty - target_quantity
-                delta_qty = -closed_qty # Selling if long, Buying if short
-                exec_price, comm = calculate_execution(target_quantity - existing_qty, price)
+                delta_qty = -closed_qty
+                exec_price, comm, slip = calculate_execution(target_quantity - existing_qty, price)
                 realized = (exec_price - position.entry_price) * closed_qty
                 self.account.balance += realized - comm
                 self.account.realized_pnl += realized - comm
@@ -460,6 +503,7 @@ class RealTimeTradingEngine:
                         "quantity": closed_qty,
                         "price": exec_price,
                         "commission": comm,
+                        "slippage_cost": slip,
                         "realized_pnl": realized - comm,
                     }
                 )
@@ -467,9 +511,8 @@ class RealTimeTradingEngine:
                     del self.account.positions[symbol]
             return
 
-        # Direction flip: close prior position, open new one.
         delta_close = -existing_qty
-        exec_close, comm_close = calculate_execution(delta_close, price)
+        exec_close, comm_close, slip_close = calculate_execution(delta_close, price)
         realized = (exec_close - position.entry_price) * existing_qty
         self.account.balance += realized - comm_close
         self.account.realized_pnl += realized - comm_close
@@ -481,11 +524,12 @@ class RealTimeTradingEngine:
                 "quantity": existing_qty,
                 "price": exec_close,
                 "commission": comm_close,
+                "slippage_cost": slip_close,
                 "realized_pnl": realized - comm_close,
             }
         )
         
-        exec_open, comm_open = calculate_execution(target_quantity, price)
+        exec_open, comm_open, slip_open = calculate_execution(target_quantity, price)
         self.account.balance -= comm_open
         leverage = self._compute_position_leverage(exec_open, target_quantity)
         self.account.positions[symbol] = FuturesPosition(
@@ -503,12 +547,42 @@ class RealTimeTradingEngine:
                 "quantity": target_quantity,
                 "price": exec_open,
                 "commission": comm_open,
+                "slippage_cost": slip_open,
                 "realized_pnl": -comm_open,
             }
         )
 
     def _check_liquidation(self, prices: Dict[str, float], timestamp: pd.Timestamp) -> bool:
-        if self.account.equity <= 0 or (self.account.maintenance_margin_req > 0 and self.account.equity < self.account.maintenance_margin_req):
+        self.portfolio_risk.verify_equity_consistency(
+            self.account.balance,
+            self.account.unrealized_pnl,
+            self.account.equity,
+        )
+        
+        is_liquidated = False
+        trigger_reason = ""
+        
+        if self.account.equity <= 0:
+            is_liquidated = True
+            trigger_reason = f"Equity depleted: {self.account.equity:.2f} <= 0"
+        elif self.account.maintenance_margin_req > 0 and self.account.equity < self.account.maintenance_margin_req:
+            is_liquidated = True
+            trigger_reason = (
+                f"Margin call: equity {self.account.equity:.2f} < "
+                f"maintenance_margin {self.account.maintenance_margin_req:.2f}"
+            )
+        
+        if is_liquidated:
+            self._liquidation_audit = self.portfolio_risk.create_liquidation_audit_log(
+                timestamp=timestamp.isoformat(),
+                trigger_reason=trigger_reason,
+                balance=self.account.balance,
+                unrealized_pnl=self.account.unrealized_pnl,
+                equity=self.account.equity,
+                positions=self.account.positions,
+                prices=prices,
+            )
+            
             for symbol, position in list(self.account.positions.items()):
                 qty = -position.quantity
                 if qty > 0:
@@ -517,6 +591,9 @@ class RealTimeTradingEngine:
                     price = prices.get(symbol, position.entry_price) * (1 - self.slippage)
                 
                 commission = abs(qty * price) * self.commission_rate
+                slippage_cost = abs(qty * prices.get(symbol, position.entry_price) * self.slippage)
+                self.portfolio_risk.accumulate_costs(commission, slippage_cost)
+                
                 realized = (price - position.entry_price) * position.quantity
                 self.account.balance += realized - commission
                 self.account.realized_pnl += realized - commission
@@ -528,7 +605,9 @@ class RealTimeTradingEngine:
                     "quantity": position.quantity,
                     "price": price,
                     "commission": commission,
-                    "realized_pnl": realized - commission
+                    "slippage_cost": slippage_cost,
+                    "realized_pnl": realized - commission,
+                    "liquidation_audit": True,
                 })
             self.account.positions.clear()
             self.account.equity = self.account.balance

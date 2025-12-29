@@ -1,4 +1,4 @@
-"""LLM-powered futures trading agent."""
+"""LLM-powered futures trading agent with structured output and confidence scoring."""
 
 from __future__ import annotations
 
@@ -10,42 +10,51 @@ import pandas as pd
 
 try:
     from openai import OpenAI
-except ImportError:  # pragma: no cover - optional dependency during tests
-    OpenAI = None  # type: ignore
+except ImportError:
+    OpenAI = None
 
-_SYSTEM_PROMPT_TEMPLATE = (
-    "You are a professional cryptocurrency perpetual futures portfolio manager. "
-    "You may trade the following contracts: {symbol_list}.\n\n"
-    "**Objective**\n"
-    "- Allocate capital dynamically while targeting strong risk-adjusted returns and controlled drawdowns.\n\n"
-    "**Available tools**\n"
-    "- get_historical_prices(symbol, end_date, bars): retrieve the latest price history window.\n"
-    "- calculate_moving_average(symbol, end_date, window_size): compute moving averages.\n"
-    "- calculate_volatility(symbol, end_date, window_size): estimate historical volatility.\n"
-    "- calculate_rsi(symbol, end_date, window_size): Relative Strength Index.\n"
-    "- calculate_macd(symbol, end_date, fast_period, slow_period, signal_period): MACD suite.\n"
-    "- calculate_atr(symbol, end_date, window_size): Average True Range proxy.\n"
-    "- calculate_bollinger_bands(symbol, end_date, window_size, num_std): upper/mid/lower bands.\n"
-    "- calculate_coefficient_of_variation(symbol, end_date, window_size): std/mean ratio.\n"
-    "- calculate_moving_average_slope(symbol, end_date, window_size, periods): trend slope estimate.\n"
-    "- get_funding_rate(symbol): recent futures funding rate (per 8h), if available.\n\n"
-    "**Exposure scale**\n"
-    "- Exposure values are leverage multiples of account equity (not dollar amounts).\n"
-    "- Example: 1.0 means a position whose notional equals account equity; 5.0 means controlling five times equity (e.g., "
-    "using 100 USDT margin to run a 500 USDT position).\n"
-    "- Use conviction-sized exposures (typically 0.25x–{per_symbol_cap:g}x) when you have an edge; stay near 0 only when you "
-    "intentionally want to remain neutral.\n\n"
-    "**Guidelines**\n"
-    "1. Evaluate recent price action and volatility.\n"
-    "2. Select leverage exposures for each contract; positive values are long, negative values are short.\n"
-    "3. Keep each individual exposure within +/-{per_symbol_cap:g}x.\n"
-    "4. Ensure the sum of absolute exposures does not exceed {max_total:g}x total leverage.\n"
-    "5. Limit step-to-step changes to +/-{max_delta:g}x per symbol; if you need a larger move, stage it over multiple updates.\n\n"
-    "**Output format**\n"
-    'Respond strictly in JSON: {{"reasoning": "brief analysis ...", "exposure": {{"BTCUSDT": <float>, "ETHUSDT": <float>}}}}. '
-    "Numbers represent leverage multiples of account equity."
-)
+_SYSTEM_PROMPT_TEMPLATE = """You are a professional cryptocurrency perpetual futures portfolio manager.
+You may trade: {symbol_list}
 
+**Objective**
+- Target strong risk-adjusted returns with controlled drawdowns
+- MINIMIZE TURNOVER: Trading costs compound rapidly. Only trade with clear conviction.
+
+**Exposure scale**
+- Values are leverage multiples of equity (1.0x = notional equals equity)
+- Use conviction-sized exposures (0.5x-{per_symbol_cap:g}x) ONLY with clear edge
+- Flat (0) is valid when uncertain
+
+**HARD CONSTRAINTS (enforced by system)**
+1. Per-symbol: +/-{per_symbol_cap:g}x
+2. Gross leverage: sum(|w|) <= {gross_leverage_cap:g}x
+3. Net exposure: |sum(w)| <= {net_exposure_cap:g}x
+4. Max positions: {max_positions:d} symbols
+5. Max turnover/step: sum(|Δw|) <= {max_turnover:g}x
+6. Step delta: +/-{max_delta:g}x per symbol
+
+**CRITICAL: Pick your BEST {max_positions:d} ideas. You CANNOT hold all symbols.**
+
+**Output format (STRICT JSON)**
+{{
+  "overall_confidence": <0.0-1.0>,
+  "reasoning": "1-2 sentence market view",
+  "positions": [
+    {{
+      "symbol": "BTCUSDT",
+      "exposure": 1.5,
+      "confidence": 0.7,
+      "reason": "Oversold RSI + bullish MACD cross"
+    }}
+  ]
+}}
+
+**RULES**
+- Only include non-zero exposure symbols
+- Omitted symbols = 0 exposure
+- confidence < 0.3 will be rejected
+- Empty/vague reasons will be rejected
+- No edge? Return empty positions array (stay flat)"""
 
 _SUPPORTED_INDICATORS = {
     "rsi",
@@ -59,8 +68,6 @@ _SUPPORTED_INDICATORS = {
 
 @dataclass
 class LLMAgent:
-    """Coordinate prompts and responses with the chosen LLM provider."""
-
     api_key: str
     config: Dict[str, Any]
     symbols: Optional[List[str]] = None
@@ -71,9 +78,16 @@ class LLMAgent:
     provider: str = "openai"
     base_url: Optional[str] = None
     indicators: Optional[List[str]] = None
+    gross_leverage_cap: Optional[float] = None
+    net_exposure_cap: Optional[float] = None
+    max_open_positions: Optional[int] = None
+    max_turnover_per_step: Optional[float] = None
+    min_confidence_threshold: float = 0.3
     _system_prompt: str = field(init=False)
     _last_exposures: Dict[str, float] = field(init=False, default_factory=dict)
     last_sanitization_notes: List[str] = field(init=False, default_factory=list)
+    last_position_details: List[Dict[str, Any]] = field(init=False, default_factory=list)
+    last_overall_confidence: float = field(init=False, default=0.0)
 
     def __post_init__(self) -> None:
         self.symbols = list(self.symbols) if self.symbols else ["BTCUSDT", "ETHUSDT"]
@@ -85,9 +99,21 @@ class LLMAgent:
         self.per_symbol_max_exposure = max(0.0, self.per_symbol_max_exposure)
         self.max_exposure_delta = float(self.max_exposure_delta or self.per_symbol_max_exposure or self.max_leverage)
         self.max_exposure_delta = max(0.0, min(self.max_exposure_delta, self.per_symbol_max_exposure or self.max_exposure_delta))
+        
+        if self.gross_leverage_cap is None:
+            self.gross_leverage_cap = self.max_leverage
+        if self.net_exposure_cap is None:
+            self.net_exposure_cap = self.max_leverage
+        if self.max_open_positions is None:
+            self.max_open_positions = len(self.symbols)
+        if self.max_turnover_per_step is None:
+            self.max_turnover_per_step = self.max_leverage * 2
+        
         self.last_reasoning: str = ""
         self.last_indicator_snapshot: str = ""
         self.last_sanitization_notes = []
+        self.last_position_details = []
+        self.last_overall_confidence = 0.0
         self._last_exposures = {symbol: 0.0 for symbol in self.symbols}
         self._client: Optional[Any] = None
         self._system_prompt = self._build_system_prompt()
@@ -120,10 +146,76 @@ class LLMAgent:
         symbol_list = ", ".join(self.symbols)
         return _SYSTEM_PROMPT_TEMPLATE.format(
             symbol_list=symbol_list,
-            max_total=self.max_leverage if self.max_leverage > 0 else 0,
             per_symbol_cap=self.per_symbol_max_exposure if self.per_symbol_max_exposure > 0 else 0,
+            gross_leverage_cap=self.gross_leverage_cap if self.gross_leverage_cap > 0 else 0,
+            net_exposure_cap=self.net_exposure_cap if self.net_exposure_cap > 0 else 0,
+            max_positions=self.max_open_positions if self.max_open_positions > 0 else len(self.symbols),
+            max_turnover=self.max_turnover_per_step if self.max_turnover_per_step > 0 else 0,
             max_delta=self.max_exposure_delta if self.max_exposure_delta > 0 else 0,
         )
+
+    def _format_structured_indicators(self, current_time: pd.Timestamp, tools: Any) -> str:
+        if not self.indicators:
+            return ""
+        
+        lines = ["```json", "{"]
+        symbol_data = []
+        
+        for symbol in self.symbols:
+            metrics = {}
+            
+            if "rsi" in self.indicators:
+                rsi = self._call_tool(tools, "calculate_rsi", symbol, current_time, 14)
+                if rsi is not None:
+                    metrics["rsi_14"] = round(rsi, 2)
+                    if rsi < 30:
+                        metrics["rsi_signal"] = "OVERSOLD"
+                    elif rsi > 70:
+                        metrics["rsi_signal"] = "OVERBOUGHT"
+                    else:
+                        metrics["rsi_signal"] = "NEUTRAL"
+            
+            if "macd" in self.indicators:
+                macd = self._call_tool(tools, "calculate_macd", symbol, current_time)
+                if isinstance(macd, dict):
+                    metrics["macd"] = round(macd.get("macd", 0.0), 6)
+                    metrics["macd_signal"] = round(macd.get("signal", 0.0), 6)
+                    metrics["macd_hist"] = round(macd.get("histogram", 0.0), 6)
+                    if metrics["macd_hist"] > 0 and metrics["macd"] > metrics["macd_signal"]:
+                        metrics["macd_trend"] = "BULLISH"
+                    elif metrics["macd_hist"] < 0 and metrics["macd"] < metrics["macd_signal"]:
+                        metrics["macd_trend"] = "BEARISH"
+                    else:
+                        metrics["macd_trend"] = "NEUTRAL"
+            
+            if "atr" in self.indicators:
+                atr = self._call_tool(tools, "calculate_atr", symbol, current_time, 14)
+                price = self._call_tool(tools, "calculate_moving_average", symbol, current_time, 1)
+                if atr is not None and price is not None and price > 0:
+                    metrics["atr_14"] = round(atr, 6)
+                    metrics["atr_pct"] = round(atr / price * 100, 2)
+            
+            if "bollinger_bands" in self.indicators:
+                bands = self._call_tool(tools, "calculate_bollinger_bands", symbol, current_time, 20, 2.0)
+                if isinstance(bands, dict):
+                    metrics["bb_upper"] = round(bands.get("upper", 0.0), 4)
+                    metrics["bb_mid"] = round(bands.get("mid", 0.0), 4)
+                    metrics["bb_lower"] = round(bands.get("lower", 0.0), 4)
+                    if bands.get("bandwidth"):
+                        metrics["bb_bandwidth"] = round(bands.get("bandwidth", 0.0), 4)
+            
+            funding = self._call_tool(tools, "get_funding_rate", symbol)
+            if funding is not None:
+                metrics["funding_rate"] = round(funding, 6)
+            
+            if metrics:
+                symbol_data.append(f'  "{symbol}": {json.dumps(metrics)}')
+        
+        lines.append(",\n".join(symbol_data))
+        lines.append("}")
+        lines.append("```")
+        
+        return "\n".join(lines)
 
     def generate_trading_signal(
         self,
@@ -131,44 +223,37 @@ class LLMAgent:
         market_data_slice: pd.DataFrame,
         available_tools: Any,
     ) -> Dict[str, float]:
-        """Return leverage exposures for each symbol using the configured LLM."""
         current_time = pd.to_datetime(current_time)
         if isinstance(current_time, pd.Timestamp) and current_time.tzinfo is not None:
             current_time = current_time.tz_convert(None)
-        formatted_data = market_data_slice.tail(60).to_string(index=False)
-        funding_lines: List[str] = []
-        try:
-            get_fr = getattr(available_tools, "get_funding_rate", None)
-            if callable(get_fr):
-                for sym in self.symbols:
-                    fr = get_fr(sym)
-                    if fr is not None:
-                        funding_lines.append(f"{sym}:{fr:.6f}")
-        except Exception:
-            funding_lines = []
-        funding_hint = ", ".join(funding_lines) if funding_lines else "N/A"
-        symbol_hint = ", ".join(self.symbols)
+        
         timestamp_utc = (
             current_time.tz_localize("UTC") if current_time.tzinfo is None else current_time.tz_convert("UTC")
         )
-        indicator_snapshot = self._format_indicator_snapshot(current_time, available_tools)
-        self.last_indicator_snapshot = indicator_snapshot
-        user_prompt = (
-            f"Current timestamp (UTC): {timestamp_utc}\n"
-            f"Tradable contracts: {symbol_hint}\n"
-            "Recent closing prices (most recent 60 records):\n"
-            f"{formatted_data}\n\n"
-            f"Recent funding rates (per 8h): {funding_hint}\n\n"
-        )
-        if indicator_snapshot:
-            user_prompt += f"Technical indicators:\n{indicator_snapshot}\n\n"
-        user_prompt += (
-            "Provide target leverage exposures while respecting these limits:\n"
-            f"- Per symbol: +/-{self.per_symbol_max_exposure:g}x\n"
-            f"- Total absolute leverage: {self.max_leverage:g}x\n"
-            f"- Max change versus previous step: +/-{self.max_exposure_delta:g}x per symbol\n"
-            "Return an exposure for every tracked symbol (0.0 when flat)."
-        )
+        
+        indicator_json = self._format_structured_indicators(current_time, available_tools)
+        self.last_indicator_snapshot = indicator_json
+        
+        current_positions = []
+        for sym, exp in self._last_exposures.items():
+            if abs(exp) > 1e-9:
+                current_positions.append(f"{sym}:{exp:+.2f}x")
+        current_pos_str = ", ".join(current_positions) if current_positions else "FLAT (no positions)"
+        
+        user_prompt = f"""Current timestamp (UTC): {timestamp_utc}
+
+**Current positions:** {current_pos_str}
+
+**Technical indicators (structured):**
+{indicator_json}
+
+**Your task:**
+1. Analyze the indicators above
+2. Select up to {self.max_open_positions} best opportunities
+3. Assign exposure and confidence to each
+4. Respect all constraints
+
+Return your allocation as JSON."""
 
         if self._client is not None:
             try:
@@ -185,18 +270,133 @@ class LLMAgent:
 
                 response = self._client.chat.completions.create(**request_kwargs)
                 content = response.choices[0].message.content if response.choices else ""
+                
                 parsed = json.loads(content)
-                exposures = parsed.get("exposure", {})
-                self.last_reasoning = str(parsed.get("reasoning", ""))
-                sanitized = self._sanitize_exposures(exposures)
-                if sanitized is not None:
-                    return sanitized
-            except Exception:
-                self.last_reasoning = "Falling back to heuristic exposures due to LLM error."
+                exposures = self._parse_structured_response(parsed)
+                if exposures is not None:
+                    return exposures
+            except Exception as e:
+                self.last_reasoning = f"Falling back to heuristic: {str(e)[:100]}"
 
         return self._fallback_exposures(current_time, available_tools, market_data_slice)
 
-    def generate_portfolio_weights(  # legacy alias
+    def _parse_structured_response(self, parsed: Dict[str, Any]) -> Optional[Dict[str, float]]:
+        self.last_sanitization_notes = []
+        self.last_position_details = []
+        
+        self.last_overall_confidence = float(parsed.get("overall_confidence", 0.0))
+        self.last_reasoning = str(parsed.get("reasoning", ""))
+        
+        if self.last_overall_confidence < self.min_confidence_threshold:
+            self.last_sanitization_notes.append(
+                f"Overall confidence {self.last_overall_confidence:.2f} < {self.min_confidence_threshold:.2f}, going flat"
+            )
+            exposures = {symbol: 0.0 for symbol in self.symbols}
+            self._last_exposures = dict(exposures)
+            return exposures
+        
+        positions = parsed.get("positions", [])
+        if isinstance(positions, dict):
+            positions = [{"symbol": k, "exposure": v} for k, v in positions.items()]
+        
+        if not positions:
+            self.last_sanitization_notes.append("No positions in response, staying flat")
+            exposures = {symbol: 0.0 for symbol in self.symbols}
+            self._last_exposures = dict(exposures)
+            return exposures
+        
+        exposures: Dict[str, float] = {symbol: 0.0 for symbol in self.symbols}
+        
+        for pos in positions:
+            symbol = str(pos.get("symbol", "")).upper()
+            if symbol not in self.symbols:
+                self.last_sanitization_notes.append(f"Unknown symbol {symbol}, skipped")
+                continue
+            
+            try:
+                exposure = float(pos.get("exposure", 0.0))
+            except (TypeError, ValueError):
+                self.last_sanitization_notes.append(f"{symbol}: invalid exposure value")
+                continue
+            
+            confidence = float(pos.get("confidence", 0.5))
+            reason = str(pos.get("reason", ""))
+            
+            if confidence < self.min_confidence_threshold:
+                self.last_sanitization_notes.append(
+                    f"{symbol}: confidence {confidence:.2f} < {self.min_confidence_threshold:.2f}, zeroed"
+                )
+                continue
+            
+            if len(reason.strip()) < 10:
+                self.last_sanitization_notes.append(
+                    f"{symbol}: reason too short ({len(reason)} chars), scaling down 50%"
+                )
+                exposure *= 0.5
+            
+            self.last_position_details.append({
+                "symbol": symbol,
+                "exposure": exposure,
+                "confidence": confidence,
+                "reason": reason,
+            })
+            
+            exposures[symbol] = exposure
+        
+        sanitized = self._sanitize_exposures(exposures)
+        return sanitized
+
+    def _sanitize_exposures(self, exposures: Dict[str, Any]) -> Optional[Dict[str, float]]:
+        sanitized: Dict[str, float] = {}
+        per_symbol_cap = max(0.0, self.per_symbol_max_exposure)
+        delta_cap = max(0.0, self.max_exposure_delta)
+        prev = self._last_exposures or {symbol: 0.0 for symbol in self.symbols}
+        
+        for symbol in self.symbols:
+            raw = exposures.get(symbol, 0.0)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                self.last_sanitization_notes.append(f"{symbol}: non-numeric exposure -> fallback")
+                return None
+            
+            clipped = value
+            if per_symbol_cap > 0.0:
+                bounded = max(-per_symbol_cap, min(per_symbol_cap, clipped))
+                if abs(bounded - clipped) > 1e-9:
+                    self.last_sanitization_notes.append(
+                        f"{symbol}: clipped {clipped:.4f} -> {bounded:.4f} by per-symbol limit ±{per_symbol_cap:.2f}"
+                    )
+                clipped = bounded
+            
+            if delta_cap > 0.0:
+                prior = prev.get(symbol, 0.0)
+                bounded = max(prior - delta_cap, min(prior + delta_cap, clipped))
+                if abs(bounded - clipped) > 1e-9:
+                    self.last_sanitization_notes.append(
+                        f"{symbol}: adjusted {clipped:.4f} -> {bounded:.4f} by delta limit ±{delta_cap:.2f}"
+                    )
+                clipped = bounded
+            
+            sanitized[symbol] = clipped
+
+        if self.max_leverage <= 0.0:
+            if any(abs(v) > 1e-12 for v in sanitized.values()):
+                self.last_sanitization_notes.append("Max leverage 0; zeroing all")
+            sanitized = {symbol: 0.0 for symbol in sanitized}
+        else:
+            total_abs = sum(abs(v) for v in sanitized.values())
+            if total_abs > self.max_leverage + 1e-9 and total_abs > 0.0:
+                scale = self.max_leverage / total_abs
+                sanitized = {k: v * scale for k, v in sanitized.items()}
+                self.last_sanitization_notes.append(
+                    f"Scaled by {scale:.4f} to respect max leverage {self.max_leverage:.2f}"
+                )
+
+        self._last_exposures = dict(sanitized)
+        return {symbol: round(value, 6) for symbol, value in sanitized.items()}
+
+    def generate_portfolio_weights(
         self,
         current_date: pd.Timestamp,
         market_data_slice: pd.DataFrame,
@@ -230,112 +430,7 @@ class LLMAgent:
         return normalized
 
     def _format_indicator_snapshot(self, current_time: pd.Timestamp, tools: Any) -> str:
-        if not self.indicators:
-            return ""
-        snapshot_lines: List[str] = []
-        for symbol in self.symbols:
-            metrics: List[str] = []
-            if "rsi" in self.indicators:
-                rsi = self._call_tool(tools, "calculate_rsi", symbol, current_time, 14)
-                if rsi is not None:
-                    metrics.append(f"RSI14={rsi:.2f}")
-            if "macd" in self.indicators:
-                macd = self._call_tool(tools, "calculate_macd", symbol, current_time)
-                if isinstance(macd, dict):
-                    metrics.append(
-                        "MACD={macd:.4f}|SIG={signal:.4f}|HIST={hist:.4f}".format(
-                            macd=macd.get("macd", 0.0),
-                            signal=macd.get("signal", 0.0),
-                            hist=macd.get("histogram", 0.0),
-                        )
-                    )
-            if "atr" in self.indicators:
-                atr = self._call_tool(tools, "calculate_atr", symbol, current_time, 14)
-                if atr is not None:
-                    metrics.append(f"ATR14={atr:.4f}")
-            if "bollinger_bands" in self.indicators:
-                bands = self._call_tool(tools, "calculate_bollinger_bands", symbol, current_time, 20, 2.0)
-                if isinstance(bands, dict):
-                    upper = bands.get("upper")
-                    mid = bands.get("mid")
-                    lower = bands.get("lower")
-                    if None not in (upper, mid, lower):
-                        metrics.append(f"BB20=({lower:.2f}/{mid:.2f}/{upper:.2f})")
-                    bandwidth = bands.get("bandwidth")
-                    if bandwidth is not None:
-                        metrics.append(f"BB_bw={bandwidth:.4f}")
-            if "coefficient_of_variation" in self.indicators:
-                cv = self._call_tool(
-                    tools,
-                    "calculate_coefficient_of_variation",
-                    symbol,
-                    current_time,
-                    20,
-                )
-                if cv is not None:
-                    metrics.append(f"CV20={cv:.4f}")
-            if "ma_slope" in self.indicators:
-                slope = self._call_tool(
-                    tools,
-                    "calculate_moving_average_slope",
-                    symbol,
-                    current_time,
-                    20,
-                    5,
-                )
-                if slope is not None:
-                    metrics.append(f"MA20Slope5={slope:.5f}")
-
-            if metrics:
-                snapshot_lines.append(f"{symbol}: {', '.join(metrics)}")
-        return "\n".join(snapshot_lines)
-
-    def _sanitize_exposures(self, exposures: Dict[str, Any]) -> Optional[Dict[str, float]]:
-        self.last_sanitization_notes = []
-        sanitized: Dict[str, float] = {}
-        per_symbol_cap = max(0.0, self.per_symbol_max_exposure)
-        delta_cap = max(0.0, self.max_exposure_delta)
-        prev = self._last_exposures or {symbol: 0.0 for symbol in self.symbols}
-        for symbol in self.symbols:
-            raw = exposures.get(symbol, 0.0)
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                self.last_sanitization_notes.append(f"{symbol}: non-numeric exposure -> fallback")
-                return None
-            clipped = value
-            if per_symbol_cap > 0.0:
-                bounded = max(-per_symbol_cap, min(per_symbol_cap, clipped))
-                if bounded != clipped:
-                    self.last_sanitization_notes.append(
-                        f"{symbol}: clipped {clipped:.6f} -> {bounded:.6f} by per-symbol limit ±{per_symbol_cap:.6f}"
-                    )
-                clipped = bounded
-            if delta_cap > 0.0:
-                prior = prev.get(symbol, 0.0)
-                bounded = max(prior - delta_cap, min(prior + delta_cap, clipped))
-                if bounded != clipped:
-                    self.last_sanitization_notes.append(
-                        f"{symbol}: adjusted {clipped:.6f} -> {bounded:.6f} by delta limit ±{delta_cap:.6f}"
-                    )
-                clipped = bounded
-            sanitized[symbol] = clipped
-
-        if self.max_leverage <= 0.0:
-            if any(abs(value) > 1e-12 for value in sanitized.values()):
-                self.last_sanitization_notes.append("Max leverage set to 0; zeroing all exposures.")
-            sanitized = {symbol: 0.0 for symbol in sanitized}
-        else:
-            total_abs = sum(abs(value) for value in sanitized.values())
-            if total_abs > self.max_leverage + 1e-9 and total_abs > 0.0:
-                scale = self.max_leverage / total_abs
-                sanitized = {symbol: value * scale for symbol, value in sanitized.items()}
-                self.last_sanitization_notes.append(
-                    f"Scaled exposures by {scale:.6f} to respect total leverage ±{self.max_leverage:.6f}"
-                )
-
-        self._last_exposures = dict(sanitized)
-        return {symbol: round(value, 6) for symbol, value in sanitized.items()}
+        return self._format_structured_indicators(current_time, tools)
 
     def _fallback_exposures(
         self,
@@ -343,7 +438,6 @@ class LLMAgent:
         available_tools: Any,
         market_data_slice: pd.DataFrame,
     ) -> Dict[str, float]:
-        """Produce deterministic exposures when the LLM response is unavailable."""
         raw_exposures: Dict[str, float] = {}
         for symbol in self.symbols:
             short_ma = available_tools.calculate_moving_average(symbol, current_time, 21)
@@ -367,16 +461,12 @@ class LLMAgent:
             sanitized = {symbol: 0.0 for symbol in self.symbols}
             self._last_exposures = dict(sanitized)
 
-        self.last_reasoning = (
-            "Deterministic fallback exposures derived from price momentum and relative volatility."
-        )
+        self.last_reasoning = "Deterministic fallback from MA momentum + volatility dampening."
         return sanitized
 
 
 @dataclass
 class BaselineAgent:
-    """Simple rule-based agent for benchmarking."""
-
     strategy: str
     symbols: List[str]
     max_leverage: float = 1.0
@@ -394,17 +484,13 @@ class BaselineAgent:
     ) -> Dict[str, float]:
         exposures = {}
         if self.strategy == "buy_hold":
-            # 1x total leverage split across symbols
             weight = 1.0 / len(self.symbols) if self.symbols else 0.0
             for sym in self.symbols:
                 exposures[sym] = weight
 
         elif self.strategy == "random":
             import random
-
             for sym in self.symbols:
-                # Random exposure within max leverage
-                # Scale so total doesn't exceed max_leverage (roughly)
                 val = (random.random() - 0.5) * 2
                 exposures[sym] = val * (self.max_leverage / len(self.symbols))
 

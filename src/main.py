@@ -154,6 +154,30 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip prompts and run with command-line arguments only.",
     )
+    parser.add_argument(
+        "--gross-leverage-cap",
+        type=float,
+        default=TRADING_CONFIG.get("gross_leverage_cap", 3.0),
+        help="Maximum sum of absolute exposures (gross leverage cap).",
+    )
+    parser.add_argument(
+        "--net-exposure-cap",
+        type=float,
+        default=TRADING_CONFIG.get("net_exposure_cap", 1.0),
+        help="Maximum absolute net exposure (long - short).",
+    )
+    parser.add_argument(
+        "--max-open-positions",
+        type=int,
+        default=TRADING_CONFIG.get("max_open_positions", 5),
+        help="Maximum number of simultaneous open positions.",
+    )
+    parser.add_argument(
+        "--max-turnover",
+        type=float,
+        default=TRADING_CONFIG.get("max_turnover_per_step", 2.0),
+        help="Maximum sum of exposure changes per step.",
+    )
     return parser.parse_args()
 
 
@@ -263,6 +287,10 @@ def _run_trading_session(
     slippage: float = 0.0,
     data_path: str | None = None,
     use_ui: bool = False,
+    gross_leverage_cap: float = 3.0,
+    net_exposure_cap: float = 1.0,
+    max_open_positions: int = 5,
+    max_turnover: float = 2.0,
 ) -> None:
     provider_key = provider.lower()
     provider_config: Dict[str, float] = AGENT_CONFIG.get(provider_key, {})
@@ -280,6 +308,8 @@ def _run_trading_session(
     print(f"Maximum leverage: {max_leverage}x")
     print(f"Per-symbol cap: {per_symbol_max_exposure}x | Max delta/step: {max_exposure_delta}x")
     print(f"Commission: {commission*100:.4f}% | Slippage: {slippage*100:.4f}%")
+    print(f"[RISK] Gross leverage cap: {gross_leverage_cap}x | Net exposure cap: ±{net_exposure_cap}x")
+    print(f"[RISK] Max positions: {max_open_positions} | Max turnover/step: {max_turnover}x")
     if min_long_exposure > 0:
         print(f"Minimum long exposure: {min_long_exposure:.4f}x of equity")
     if selected_indicators:
@@ -325,6 +355,10 @@ def _run_trading_session(
             per_symbol_max_exposure=per_symbol_max_exposure,
             max_exposure_delta=max_exposure_delta,
             indicators=selected_indicators,
+            gross_leverage_cap=gross_leverage_cap,
+            net_exposure_cap=net_exposure_cap,
+            max_open_positions=max_open_positions,
+            max_turnover_per_step=max_turnover,
         )
     else:
         agent = BaselineAgent(
@@ -352,6 +386,10 @@ def _run_trading_session(
         commission_rate=commission,
         slippage=slippage,
         liquidation_threshold=TRADING_CONFIG.get("liquidation_threshold", 0.05),
+        gross_leverage_cap=gross_leverage_cap,
+        net_exposure_cap=net_exposure_cap,
+        max_open_positions=max_open_positions,
+        max_turnover_per_step=max_turnover,
     )
 
     run_args = {
@@ -375,6 +413,10 @@ def _run_trading_session(
         "commission": commission,
         "slippage": slippage,
         "use_ui": use_ui,
+        "gross_leverage_cap": gross_leverage_cap,
+        "net_exposure_cap": net_exposure_cap,
+        "max_open_positions": max_open_positions,
+        "max_turnover": max_turnover,
     }
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -455,6 +497,10 @@ def _interactive_cli(args: argparse.Namespace) -> None:
             slippage=args.slippage,
             data_path=args.data_path,
             use_ui=args.ui,
+            gross_leverage_cap=args.gross_leverage_cap,
+            net_exposure_cap=args.net_exposure_cap,
+            max_open_positions=args.max_open_positions,
+            max_turnover=args.max_turnover,
         )
 
 
@@ -485,6 +531,10 @@ def main() -> None:
             slippage=args.slippage,
             data_path=args.data_path,
             use_ui=args.ui,
+            gross_leverage_cap=args.gross_leverage_cap,
+            net_exposure_cap=args.net_exposure_cap,
+            max_open_positions=args.max_open_positions,
+            max_turnover=args.max_turnover,
         )
 
 
