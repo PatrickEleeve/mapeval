@@ -33,18 +33,18 @@ QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
 AGENT_CONFIG = {
     "openai": {
         "model_name": "gpt-5",
-        "temperature": 1,
+        "temperature": 0.2,
         "supports_json_response_format": True,
     },
     "deepseek": {
         "model_name": "deepseek-chat",
-        "temperature": 1,
+        "temperature": 0.2,
         "base_url": "https://api.deepseek.com",
         "supports_json_response_format": True,
     },
     "qwen": {
         "model_name": "qwen3-max",
-        "temperature": 1,
+        "temperature": 0.2,
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "supports_json_response_format": True,
     },
