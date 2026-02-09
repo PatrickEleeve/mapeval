@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
+import logging
+import signal
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from tools import FinancialTools
 from portfolio_risk_controller import PortfolioRiskController, PortfolioRiskLimits
+from risk_manager import RiskManager, RiskLimits
+from order_executor import OrderExecutor
+from order_models import PositionInfo
+
+logger = logging.getLogger(__name__)
+
+# Optional event imports - gracefully degrade if not available
+try:
+    from events import EventType, Event, order_filled as _order_filled_event, risk_alert as _risk_alert_event
+    EVENTS_AVAILABLE = True
+except ImportError:
+    EVENTS_AVAILABLE = False
 
 
 @dataclass
@@ -80,9 +95,13 @@ class RealTimeTradingEngine:
         net_exposure_cap: Optional[float] = None,
         max_open_positions: Optional[int] = None,
         max_turnover_per_step: Optional[float] = None,
+        risk_manager: Optional[RiskManager] = None,
+        execution_mode: str = "simulation",
+        order_executor: Optional[OrderExecutor] = None,
     ) -> None:
         self.market_data = market_data
         self.agent = agent
+        self.initial_capital = initial_capital
         self.account = AccountState(balance=initial_capital)
         self.max_leverage = max(0.0, float(max_leverage))
         self.poll_interval_seconds = poll_interval_seconds
@@ -91,6 +110,7 @@ class RealTimeTradingEngine:
         self.commission_rate = max(0.0, float(commission_rate))
         self.slippage = max(0.0, float(slippage))
         self.liquidation_threshold = max(0.0, float(liquidation_threshold))
+        self.execution_mode = execution_mode
         per_symbol_cap = per_symbol_max_exposure if per_symbol_max_exposure is not None else self.max_leverage
         if self.max_leverage > 0.0 and per_symbol_cap is not None:
             per_symbol_cap = min(float(per_symbol_cap), self.max_leverage)
@@ -106,7 +126,13 @@ class RealTimeTradingEngine:
             symbol: 0.0 for symbol in getattr(self.market_data, "symbols", [])
         }
         self._last_validation_notes: List[str] = []
-        
+        self._shutdown_requested = False
+
+        # Risk manager integration
+        self.risk_manager = risk_manager
+        if self.risk_manager is not None:
+            self.risk_manager.initialize(initial_capital)
+
         portfolio_limits = PortfolioRiskLimits(
             gross_leverage_cap=gross_leverage_cap if gross_leverage_cap is not None else self.max_leverage,
             net_exposure_cap=net_exposure_cap if net_exposure_cap is not None else self.max_leverage,
@@ -120,11 +146,113 @@ class RealTimeTradingEngine:
         )
         self._liquidation_audit: Optional[Dict[str, Any]] = None
 
+        # Order executor for paper/live trading
+        self.order_executor = order_executor
+
+        # Event bus and notifier (set externally by main.py after construction)
+        self.event_bus = None
+        self.notifier = None
+        self.audit_logger = None
+
+    def _publish_event(self, event) -> None:
+        """Publish an event to the event bus if available."""
+        if self.event_bus is not None:
+            try:
+                self.event_bus.publish(event)
+            except Exception as exc:
+                logger.debug("Event publish failed: %s", exc)
+
+    def reconcile(self) -> Dict[str, Any]:
+        """Reconcile local state with the exchange.
+
+        Fetches real positions and balance from the executor (if available)
+        and compares with local AccountState. Returns a dict with discrepancies.
+        """
+        if self.order_executor is None:
+            return {"status": "skipped", "reason": "no executor configured"}
+
+        discrepancies: List[Dict[str, Any]] = []
+        try:
+            remote_positions = self.order_executor.sync_positions()
+            remote_balance = self.order_executor.sync_balance()
+
+            # Check balance discrepancy
+            balance_diff = abs(self.account.balance - remote_balance)
+            if balance_diff > 1.0:  # More than $1 difference
+                discrepancies.append({
+                    "type": "balance",
+                    "local": self.account.balance,
+                    "remote": remote_balance,
+                    "diff": balance_diff,
+                })
+                logger.warning(
+                    "Balance discrepancy: local=%.2f, remote=%.2f",
+                    self.account.balance, remote_balance,
+                )
+
+            # Check position discrepancies
+            all_symbols = set(list(self.account.positions.keys()) + list(remote_positions.keys()))
+            for symbol in all_symbols:
+                local_pos = self.account.positions.get(symbol)
+                remote_pos = remote_positions.get(symbol)
+
+                local_qty = local_pos.quantity if local_pos else 0.0
+                remote_qty = remote_pos.quantity if remote_pos else 0.0
+                qty_diff = abs(local_qty - remote_qty)
+
+                if qty_diff > 1e-6:
+                    discrepancies.append({
+                        "type": "position",
+                        "symbol": symbol,
+                        "local_qty": local_qty,
+                        "remote_qty": remote_qty,
+                        "diff": qty_diff,
+                    })
+                    logger.warning(
+                        "Position discrepancy for %s: local=%.6f, remote=%.6f",
+                        symbol, local_qty, remote_qty,
+                    )
+
+            return {
+                "status": "completed",
+                "discrepancies": discrepancies,
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        except Exception as exc:
+            logger.error("Reconciliation failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+    def shutdown(self) -> None:
+        """Request graceful shutdown: close all positions and stop the main loop."""
+        logger.info("Shutdown requested, closing all positions...")
+        self._shutdown_requested = True
+
+        # Close all open positions at current prices
+        try:
+            prices = self.market_data.fetch_latest_prices()
+        except Exception:
+            prices = self.market_data.latest_prices()
+
+        if prices:
+            timestamp = pd.Timestamp.utcnow().floor("s")
+            for symbol in list(self.account.positions.keys()):
+                price = prices.get(symbol)
+                if price is not None:
+                    self._rebalance_position(symbol, 0.0, price, timestamp)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+        logger.info(
+            "Shutdown complete. Final equity: %.2f, Realized PnL: %.2f",
+            self.account.equity,
+            self.account.realized_pnl,
+        )
+
     def run(self, duration_seconds: float, reporter: Optional[Any] = None) -> Dict[str, Any]:
         end_time = time.time() + duration_seconds
         next_decision_ts = time.time()
-        while time.time() < end_time:
+        while time.time() < end_time and not self._shutdown_requested:
             loop_ts = pd.Timestamp.utcnow().floor("s")
+            current_time = datetime.now(timezone.utc)
             try:
                 prices = self.market_data.fetch_latest_prices()
             except StopIteration:
@@ -141,7 +269,36 @@ class RealTimeTradingEngine:
 
             self.market_data.append_prices(prices, timestamp=loop_ts)
             self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
-            
+
+            # Update risk manager with current equity
+            if self.risk_manager is not None:
+                self.risk_manager.update_equity(self.account.equity, current_time)
+                # Check if force-close is needed (drawdown or equity floor breach)
+                if self.risk_manager.should_force_close(self.account.equity, self.initial_capital):
+                    logger.warning("Risk manager triggered force-close at equity %.2f", self.account.equity)
+                    if EVENTS_AVAILABLE:
+                        self._publish_event(Event(
+                            event_type=EventType.FORCE_CLOSE,
+                            payload={
+                                "equity": self.account.equity,
+                                "message": f"Force-close at equity {self.account.equity:.2f}",
+                            },
+                            source="risk_manager",
+                        ))
+                    if reporter is not None:
+                        risk_report = self.risk_manager.get_risk_report(self.account.equity)
+                        reporter.record_warning(
+                            loop_ts,
+                            f"RISK: Force-close triggered (drawdown: {risk_report['drawdown']:.2%})",
+                        )
+                    self.shutdown()
+                    break
+                # Warn about positions held too long
+                age_warnings = self.risk_manager.get_position_age_warnings(current_time)
+                for warning in age_warnings:
+                    if reporter is not None:
+                        reporter.record_warning(loop_ts, f"RISK: {warning}")
+
             if self._check_liquidation(prices, loop_ts):
                 if reporter is not None:
                     reporter.record_warning(loop_ts, "Account liquidated due to insufficient margin.")
@@ -174,7 +331,9 @@ class RealTimeTradingEngine:
                         reporter.record_warning(loop_ts, f"Agent error: {exc}")
                     signal = {}
                 agent_notes = list(getattr(self.agent, "last_sanitization_notes", []) or [])
+                agent_action = getattr(self.agent, "last_action", "REBALANCE")
                 plan = {
+                    "action": agent_action,
                     "reasoning": getattr(self.agent, "last_reasoning", ""),
                     "actions": [
                         {"symbol": symbol, "target_exposure": signal.get(symbol, 0.0)}
@@ -193,7 +352,10 @@ class RealTimeTradingEngine:
                     engine_notes = adjustments.get("engine") if isinstance(adjustments, dict) else None
                     if reporter is not None and agent_notes:
                         for note in agent_notes:
-                            reporter.record_warning(loop_ts, f"Agent clamp: {note}")
+                            if "HOLD" in note:
+                                print(f"[{loop_ts}] 📌 {note}")
+                            else:
+                                reporter.record_warning(loop_ts, f"Agent clamp: {note}")
                     if reporter is not None and engine_notes:
                         for note in engine_notes:
                             reporter.record_warning(loop_ts, f"Constraint applied: {note}")
@@ -442,6 +604,13 @@ class RealTimeTradingEngine:
                     "realized_pnl": -comm,
                 }
             )
+            if self.risk_manager is not None:
+                self.risk_manager.record_position_open(symbol, datetime.now(timezone.utc))
+            if EVENTS_AVAILABLE:
+                self._publish_event(_order_filled_event(
+                    symbol=symbol, side="BUY" if target_quantity > 0 else "SELL",
+                    quantity=abs(target_quantity), price=exec_price, commission=comm,
+                ))
             return
 
         existing_qty = position.quantity
@@ -463,6 +632,14 @@ class RealTimeTradingEngine:
                     "realized_pnl": realized - comm,
                 }
             )
+            if self.risk_manager is not None:
+                self.risk_manager.record_trade_result(realized - comm, datetime.now(timezone.utc))
+                self.risk_manager.record_position_close(symbol)
+            if EVENTS_AVAILABLE:
+                self._publish_event(_order_filled_event(
+                    symbol=symbol, side="SELL" if existing_qty > 0 else "BUY",
+                    quantity=abs(existing_qty), price=exec_price, commission=comm,
+                ))
             del self.account.positions[symbol]
             return
 
@@ -628,6 +805,7 @@ class RealTimeTradingEngine:
         timestamp = pd.Timestamp.utcnow().floor("s")
         raw_agent_notes = plan.get("agent_adjustments") if isinstance(plan, dict) else []
         agent_notes = [str(note) for note in raw_agent_notes if note]
+        plan_action = plan.get("action", "REBALANCE") if isinstance(plan, dict) else "REBALANCE"
         try:
             prices = self.market_data.fetch_latest_prices()
         except RuntimeError as exc:
@@ -654,6 +832,7 @@ class RealTimeTradingEngine:
                     reason=reason,
                     agent_notes=agent_notes,
                     engine_notes=None,
+                    action=plan_action,
                 )
                 return response
         self.market_data.append_prices(prices, timestamp=timestamp)
@@ -697,10 +876,35 @@ class RealTimeTradingEngine:
                 reason=reason,
                 agent_notes=agent_notes,
                 engine_notes=engine_notes,
+                action=plan_action,
             )
             return response
 
         exposures = validation["exposures"]
+
+        # Risk manager pre-trade check
+        if self.risk_manager is not None:
+            current_time_dt = datetime.now(timezone.utc)
+            for action in plan.get("actions", []):
+                sym = str(action.get("symbol", "")).upper()
+                target_exp = float(action.get("target_exposure", 0.0))
+                if not sym:
+                    continue
+                risk_ok, risk_violations = self.risk_manager.check_order(
+                    symbol=sym,
+                    target_exposure=target_exp,
+                    current_equity=self.account.equity,
+                    initial_equity=self.initial_capital,
+                    current_time=current_time_dt,
+                )
+                if not risk_ok:
+                    logger.warning("Risk check failed for %s: %s", sym, risk_violations)
+                    if reporter is not None if hasattr(self, '_reporter') else False:
+                        pass
+                    # Reduce exposure to 0 for violated symbols
+                    exposures[sym] = current_exposures.get(sym, 0.0)
+                    engine_notes.append(f"RISK: {sym} blocked - {'; '.join(risk_violations)}")
+
         if self.min_long_exposure > 0.0:
             violating = [
                 symbol
@@ -732,6 +936,7 @@ class RealTimeTradingEngine:
                     reason=reason,
                     agent_notes=agent_notes,
                     engine_notes=engine_notes,
+                    action=plan_action,
                 )
                 return response
 
@@ -758,6 +963,7 @@ class RealTimeTradingEngine:
                 reason=reason,
                 agent_notes=agent_notes,
                 engine_notes=engine_notes,
+                action=plan_action,
             )
             return response
 
@@ -784,6 +990,7 @@ class RealTimeTradingEngine:
                 reason=reason,
                 agent_notes=agent_notes,
                 engine_notes=engine_notes,
+                action=plan_action,
             )
             return response
 
@@ -814,6 +1021,23 @@ class RealTimeTradingEngine:
             },
         }
 
+        # Audit logging for live/paper mode
+        if self.audit_logger is not None and self.execution_mode in ("live", "paper"):
+            for sym, exp in applied_exposures.items():
+                if abs(exp) > 1e-9 or sym in self.account.positions:
+                    try:
+                        self.audit_logger.log_order(
+                            action="rebalance",
+                            symbol=sym,
+                            side="BUY" if exp > 0 else "SELL" if exp < 0 else "FLAT",
+                            quantity=abs(exp * max(equity, 1e-6) / prices.get(sym, 1.0)),
+                            price=prices.get(sym),
+                            order_id=None,
+                            execution_mode=self.execution_mode,
+                        )
+                    except Exception as exc:
+                        logger.debug("Audit log write failed: %s", exc)
+
         reasoning = plan.get("reasoning", "")
         self._log_decision(
             timestamp,
@@ -825,6 +1049,7 @@ class RealTimeTradingEngine:
             reason=None,
             agent_notes=agent_notes,
             engine_notes=engine_notes,
+            action=plan_action,
         )
 
         return response
@@ -841,10 +1066,12 @@ class RealTimeTradingEngine:
         reason: Optional[Dict[str, Any]],
         agent_notes: Optional[List[str]],
         engine_notes: Optional[List[str]],
+        action: str = "REBALANCE",
     ) -> None:
         entry: Dict[str, Any] = {
             "timestamp": timestamp.isoformat(),
             "source": source,
+            "action": action,
             "requested_exposure": requested_exposure,
             "applied_exposure": applied_exposure,
             "reasoning": reasoning,

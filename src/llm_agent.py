@@ -18,7 +18,14 @@ You may trade: {symbol_list}
 
 **Objective**
 - Target strong risk-adjusted returns with controlled drawdowns
-- MINIMIZE TURNOVER: Trading costs compound rapidly. Only trade with clear conviction.
+- MINIMIZE TURNOVER: Trading costs (0.1% round-trip) compound rapidly. Only trade with CLEAR conviction.
+- **HOLD IS YOUR DEFAULT CHOICE.** Most market conditions do not warrant action.
+
+**Trading Philosophy**
+- A good trade held for 30+ minutes beats 10 quick trades
+- Transaction costs destroy edge: each rebalance costs ~0.1% of turnover
+- Patience is alpha. Noise is not signal.
+- If current positions are still reasonable, HOLD.
 
 **Exposure scale**
 - Values are leverage multiples of equity (1.0x = notional equals equity)
@@ -36,7 +43,16 @@ You may trade: {symbol_list}
 **CRITICAL: Pick your BEST {max_positions:d} ideas. You CANNOT hold all symbols.**
 
 **Output format (STRICT JSON)**
+
+OPTION 1 - HOLD (PREFERRED - no changes, keep current positions):
 {{
+  "action": "HOLD",
+  "reasoning": "Why no action is needed right now"
+}}
+
+OPTION 2 - REBALANCE (only when truly necessary):
+{{
+  "action": "REBALANCE",
   "overall_confidence": <0.0-1.0>,
   "reasoning": "1-2 sentence market view",
   "positions": [
@@ -49,12 +65,26 @@ You may trade: {symbol_list}
   ]
 }}
 
+**WHEN TO HOLD (default) vs REBALANCE**
+HOLD when:
+- No dramatic change in indicators since last decision
+- Current positions are still aligned with market direction  
+- RSI/MACD signals are ambiguous or unchanged
+- Cost of rebalancing > expected benefit
+
+REBALANCE only when:
+- Clear reversal signal (RSI crosses 30/70, MACD cross)
+- Current positions are WRONG (not just suboptimal)
+- New high-conviction opportunity appeared
+- Stop-loss level breached
+
 **RULES**
-- Only include non-zero exposure symbols
-- Omitted symbols = 0 exposure
+- HOLD is preferred unless you have HIGH CONVICTION (>0.6) for a change
+- Rebalancing costs ~0.1% of turnover. A 2x turnover costs 0.2% of equity.
+- Only include non-zero exposure symbols in positions array
+- Omitted symbols in REBALANCE = 0 exposure (position closed)
 - confidence < 0.3 will be rejected
-- Empty/vague reasons will be rejected
-- No edge? Return empty positions array (stay flat)"""
+- Empty/vague reasons will be rejected"""
 
 _SUPPORTED_INDICATORS = {
     "rsi",
@@ -88,6 +118,7 @@ class LLMAgent:
     last_sanitization_notes: List[str] = field(init=False, default_factory=list)
     last_position_details: List[Dict[str, Any]] = field(init=False, default_factory=list)
     last_overall_confidence: float = field(init=False, default=0.0)
+    last_action: str = field(init=False, default="HOLD")
 
     def __post_init__(self) -> None:
         self.symbols = list(self.symbols) if self.symbols else ["BTCUSDT", "ETHUSDT"]
@@ -114,6 +145,7 @@ class LLMAgent:
         self.last_sanitization_notes = []
         self.last_position_details = []
         self.last_overall_confidence = 0.0
+        self.last_action = "HOLD"
         self._last_exposures = {symbol: 0.0 for symbol in self.symbols}
         self._client: Optional[Any] = None
         self._system_prompt = self._build_system_prompt()
@@ -249,11 +281,11 @@ class LLMAgent:
 
 **Your task:**
 1. Analyze the indicators above
-2. Select up to {self.max_open_positions} best opportunities
-3. Assign exposure and confidence to each
-4. Respect all constraints
+2. Decide: HOLD (keep current positions) or REBALANCE (adjust positions)
+3. If REBALANCE: select up to {self.max_open_positions} best opportunities with exposure and confidence
+4. Remember: trading costs ~0.1% of turnover. Only rebalance with HIGH CONVICTION (>0.6).
 
-Return your allocation as JSON."""
+Return your decision as JSON (HOLD or REBALANCE format)."""
 
         if self._client is not None:
             try:
@@ -284,23 +316,29 @@ Return your allocation as JSON."""
         self.last_sanitization_notes = []
         self.last_position_details = []
         
-        self.last_overall_confidence = float(parsed.get("overall_confidence", 0.0))
+        action = str(parsed.get("action", "REBALANCE")).upper()
+        self.last_action = action
         self.last_reasoning = str(parsed.get("reasoning", ""))
+        
+        if action == "HOLD":
+            self.last_sanitization_notes.append("LLM chose HOLD - keeping current positions")
+            self.last_overall_confidence = 0.0
+            return dict(self._last_exposures)
+        
+        self.last_overall_confidence = float(parsed.get("overall_confidence", 0.0))
         
         if self.last_overall_confidence < self.min_confidence_threshold:
             self.last_sanitization_notes.append(
-                f"Overall confidence {self.last_overall_confidence:.2f} < {self.min_confidence_threshold:.2f}, going flat"
+                f"Overall confidence {self.last_overall_confidence:.2f} < {self.min_confidence_threshold:.2f}, keeping positions"
             )
-            exposures = {symbol: 0.0 for symbol in self.symbols}
-            self._last_exposures = dict(exposures)
-            return exposures
+            return dict(self._last_exposures)
         
         positions = parsed.get("positions", [])
         if isinstance(positions, dict):
             positions = [{"symbol": k, "exposure": v} for k, v in positions.items()]
         
         if not positions:
-            self.last_sanitization_notes.append("No positions in response, staying flat")
+            self.last_sanitization_notes.append("No positions in REBALANCE response, going flat")
             exposures = {symbol: 0.0 for symbol in self.symbols}
             self._last_exposures = dict(exposures)
             return exposures

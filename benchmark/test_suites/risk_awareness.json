@@ -1,0 +1,224 @@
+{
+  "category": "risk_awareness",
+  "description": "测试LLM识别风险并做出正确应对的能力",
+  "generated_at": "2025-01-16T22:00:00",
+  "methodology": "构建高风险场景，评估LLM是否采取保守/防御性措施",
+  "total_cases": 20,
+  "cases": [
+    {
+      "id": "risk_BTCUSDT_drawdown_01",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-19T10:00:00",
+      "scenario": "LARGE_DRAWDOWN",
+      "market_context": {
+        "price": 92000,
+        "rsi_14": 28.5,
+        "drawdown_pct": 12.5,
+        "atr_pct": 3.2,
+        "volatility_rank": 0.88,
+        "trend": "bearish",
+        "macd_histogram": -280.5
+      },
+      "question": "当前BTCUSDT处于LARGE_DRAWDOWN状态（回撤12.5%），你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["REDUCE", "CLOSE", "HOLD", "LEVERAGE_DOWN"],
+        "wrong_actions": ["INCREASE", "LEVERAGE_UP"]
+      }
+    },
+    {
+      "id": "risk_BTCUSDT_overbought_01",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-15T14:00:00",
+      "scenario": "EXTREME_OVERBOUGHT",
+      "market_context": {
+        "price": 106500,
+        "rsi_14": 88.2,
+        "drawdown_pct": 0,
+        "atr_pct": 2.5,
+        "volatility_rank": 0.75,
+        "trend": "bullish",
+        "macd_histogram": 450.2
+      },
+      "question": "当前BTCUSDT处于EXTREME_OVERBOUGHT状态（RSI=88.2），你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["REDUCE", "CLOSE", "SHORT", "HOLD"],
+        "wrong_actions": ["INCREASE_LONG", "LEVERAGE_UP"]
+      }
+    },
+    {
+      "id": "risk_ETHUSDT_volatility_01",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-20T08:00:00",
+      "scenario": "HIGH_VOLATILITY",
+      "market_context": {
+        "price": 3650,
+        "rsi_14": 52.5,
+        "drawdown_pct": 5.2,
+        "atr_pct": 4.8,
+        "volatility_rank": 0.95,
+        "trend": "neutral",
+        "macd_histogram": 2.5
+      },
+      "question": "当前ETHUSDT处于HIGH_VOLATILITY状态（波动率排名95%），你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["REDUCE_LEVERAGE", "REDUCE_POSITION", "HOLD", "CLOSE"],
+        "wrong_actions": ["INCREASE_LEVERAGE", "LEVERAGE_UP", "INCREASE"]
+      }
+    },
+    {
+      "id": "risk_SOLUSDT_downtrend_01",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-22T16:00:00",
+      "scenario": "CONFIRMED_DOWNTREND",
+      "market_context": {
+        "price": 178.5,
+        "rsi_14": 35.2,
+        "drawdown_pct": 18.5,
+        "atr_pct": 4.2,
+        "volatility_rank": 0.82,
+        "trend": "bearish",
+        "macd_histogram": -8.5
+      },
+      "question": "当前SOLUSDT处于CONFIRMED_DOWNTREND状态，MACD连续下行，你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["SHORT", "CLOSE_LONG", "HOLD_SHORT", "REDUCE"],
+        "wrong_actions": ["INCREASE_LONG", "BUY"]
+      }
+    },
+    {
+      "id": "risk_BTCUSDT_margin_call_01",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-28T04:00:00",
+      "scenario": "NEAR_LIQUIDATION",
+      "market_context": {
+        "price": 91500,
+        "rsi_14": 22.5,
+        "drawdown_pct": 22.0,
+        "atr_pct": 3.8,
+        "volatility_rank": 0.92,
+        "trend": "bearish",
+        "macd_histogram": -380.2,
+        "margin_ratio": 0.15
+      },
+      "question": "账户接近爆仓（保证金率15%），BTCUSDT持续下跌，你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["CLOSE", "REDUCE", "LEVERAGE_DOWN"],
+        "wrong_actions": ["INCREASE", "HOLD", "LEVERAGE_UP"]
+      }
+    },
+    {
+      "id": "risk_ETHUSDT_flash_crash_01",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-25T02:00:00",
+      "scenario": "FLASH_CRASH",
+      "market_context": {
+        "price": 3280,
+        "rsi_14": 15.2,
+        "drawdown_pct": 8.5,
+        "atr_pct": 5.5,
+        "volatility_rank": 0.98,
+        "trend": "bearish",
+        "macd_histogram": -65.2,
+        "price_change_1h": -6.2
+      },
+      "question": "ETHUSDT在过去1小时内下跌6.2%（闪崩），你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["HOLD", "REDUCE", "CLOSE"],
+        "wrong_actions": ["INCREASE", "LEVERAGE_UP", "DOUBLE_DOWN"]
+      }
+    },
+    {
+      "id": "risk_BTCUSDT_leverage_warning_01",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-02T10:00:00",
+      "scenario": "EXCESSIVE_LEVERAGE",
+      "market_context": {
+        "price": 94500,
+        "rsi_14": 45.2,
+        "drawdown_pct": 3.5,
+        "atr_pct": 2.2,
+        "volatility_rank": 0.65,
+        "trend": "neutral",
+        "macd_histogram": -25.5,
+        "current_leverage": 25.0
+      },
+      "question": "当前杠杆25x，市场波动率中等，你会如何调整？",
+      "ground_truth": {
+        "correct_actions": ["LEVERAGE_DOWN", "REDUCE_POSITION", "CLOSE"],
+        "wrong_actions": ["LEVERAGE_UP", "INCREASE"]
+      }
+    },
+    {
+      "id": "risk_SOLUSDT_oversold_bounce_01",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-05T06:00:00",
+      "scenario": "OVERSOLD_HIGH_VOL",
+      "market_context": {
+        "price": 168.5,
+        "rsi_14": 18.5,
+        "drawdown_pct": 25.0,
+        "atr_pct": 5.8,
+        "volatility_rank": 0.95,
+        "trend": "bearish",
+        "macd_histogram": -12.5
+      },
+      "question": "SOLUSDT极度超卖（RSI=18.5），但波动率极高，你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["HOLD", "SMALL_LONG", "REDUCE_LEVERAGE"],
+        "wrong_actions": ["LARGE_LONG", "LEVERAGE_UP", "ALL_IN"]
+      }
+    },
+    {
+      "id": "risk_BTCUSDT_divergence_01",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-08T14:00:00",
+      "scenario": "BEARISH_DIVERGENCE",
+      "market_context": {
+        "price": 99500,
+        "rsi_14": 62.5,
+        "drawdown_pct": 0,
+        "atr_pct": 1.8,
+        "volatility_rank": 0.55,
+        "trend": "bullish",
+        "macd_histogram": -15.2,
+        "note": "价格创新高但MACD未创新高"
+      },
+      "question": "BTCUSDT出现价格与MACD的背离（价格新高但MACD下降），你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["REDUCE", "HEDGE", "TIGHTEN_STOP", "HOLD"],
+        "wrong_actions": ["INCREASE", "LEVERAGE_UP"]
+      }
+    },
+    {
+      "id": "risk_ETHUSDT_support_break_01",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-10T20:00:00",
+      "scenario": "SUPPORT_BREAKDOWN",
+      "market_context": {
+        "price": 3180,
+        "rsi_14": 32.5,
+        "drawdown_pct": 10.2,
+        "atr_pct": 2.8,
+        "volatility_rank": 0.72,
+        "trend": "bearish",
+        "macd_histogram": -42.5,
+        "note": "刚跌破3200支撑位"
+      },
+      "question": "ETHUSDT跌破关键支撑位3200，你会如何操作？",
+      "ground_truth": {
+        "correct_actions": ["CLOSE_LONG", "SHORT", "REDUCE", "STOP_LOSS"],
+        "wrong_actions": ["BUY_DIP", "INCREASE_LONG", "AVERAGE_DOWN"]
+      }
+    }
+  ]
+}

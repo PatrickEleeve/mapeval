@@ -3,16 +3,66 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import logging
+import os
+import signal
+import sys
 from datetime import datetime, timezone
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from config import AGENT_CONFIG, DEEPSEEK_API_KEY, OPENAI_API_KEY, QWEN_API_KEY, TRADING_CONFIG
+from config_models import load_config, AppConfig
 from data_manager import RealTimeMarketData, BacktestMarketData, load_historical_data
 from llm_agent import LLMAgent, BaselineAgent
 from log_manager import SessionLogger
+from rate_limiter import RateLimiter
 from reporter import RealTimeReporter
+from risk_manager import RiskManager, RiskLimits
 from tui_reporter import TUIReporter
 from trading_engine import RealTimeTradingEngine
+from event_bus import EventBus
+from events import EventType, Event, risk_alert
+from notifier import create_notifier, LogNotifier
+from security import AuditLogger, ReadOnlyGuard
+from order_executor import create_executor
+import binance_data_source
+
+logger = logging.getLogger(__name__)
+
+# Optional imports for database and API server
+try:
+    from database import DatabaseManager
+    from db_models import SQLALCHEMY_AVAILABLE
+    DB_AVAILABLE = SQLALCHEMY_AVAILABLE
+except ImportError:
+    DB_AVAILABLE = False
+
+try:
+    from api_server import start_api_server, FASTAPI_AVAILABLE
+    API_AVAILABLE = FASTAPI_AVAILABLE
+except ImportError:
+    API_AVAILABLE = False
+
+# Global engine reference for signal handlers
+_active_engine: Optional[RealTimeTradingEngine] = None
+
+
+def _signal_handler(signum, frame):
+    """Handle SIGINT/SIGTERM for graceful shutdown."""
+    sig_name = signal.Signals(signum).name
+    print(f"\n[{sig_name}] Graceful shutdown initiated...")
+    if _active_engine is not None:
+        _active_engine.shutdown()
+    else:
+        sys.exit(0)
+
+
+def _atexit_handler():
+    """Safety net: ensure positions are closed on exit."""
+    if _active_engine is not None and _active_engine.account.positions:
+        logger.warning("atexit: closing %d remaining positions", len(_active_engine.account.positions))
+        _active_engine.shutdown()
 
 
 AVAILABLE_INDICATORS = (
@@ -155,6 +205,48 @@ def _parse_args() -> argparse.Namespace:
         help="Skip prompts and run with command-line arguments only.",
     )
     parser.add_argument(
+        "--execution-mode",
+        choices=["simulation", "paper", "live"],
+        default="simulation",
+        help="Execution mode: simulation (no real orders), paper (real data, simulated fills), live (real orders).",
+    )
+    parser.add_argument(
+        "--enable-api",
+        action="store_true",
+        help="Start the REST API server for monitoring (requires fastapi).",
+    )
+    parser.add_argument(
+        "--api-port",
+        type=int,
+        default=8000,
+        help="Port for the REST API server.",
+    )
+    parser.add_argument(
+        "--enable-db",
+        action="store_true",
+        help="Enable database persistence (requires sqlalchemy).",
+    )
+    parser.add_argument(
+        "--db-url",
+        default=None,
+        help="Database URL (default: sqlite:///data/trading.db).",
+    )
+    parser.add_argument(
+        "--telegram-bot-token",
+        default=None,
+        help="Telegram bot token for notifications.",
+    )
+    parser.add_argument(
+        "--telegram-chat-id",
+        default=None,
+        help="Telegram chat ID for notifications.",
+    )
+    parser.add_argument(
+        "--webhook-url",
+        default=None,
+        help="Webhook URL for notifications.",
+    )
+    parser.add_argument(
         "--gross-leverage-cap",
         type=float,
         default=TRADING_CONFIG.get("gross_leverage_cap", 3.0),
@@ -291,6 +383,14 @@ def _run_trading_session(
     net_exposure_cap: float = 1.0,
     max_open_positions: int = 5,
     max_turnover: float = 2.0,
+    execution_mode: str = "simulation",
+    enable_api: bool = False,
+    api_port: int = 8000,
+    enable_db: bool = False,
+    db_url: str | None = None,
+    telegram_bot_token: str | None = None,
+    telegram_chat_id: str | None = None,
+    webhook_url: str | None = None,
 ) -> None:
     provider_key = provider.lower()
     provider_config: Dict[str, float] = AGENT_CONFIG.get(provider_key, {})
@@ -371,7 +471,95 @@ def _run_trading_session(
         reporter = TUIReporter()
     else:
         reporter = RealTimeReporter(print_interval_seconds=print_interval)
-        
+
+    # Initialize rate limiter for Binance API
+    rate_limiter = RateLimiter(max_weight_per_minute=1200)
+    binance_data_source.set_rate_limiter(rate_limiter)
+
+    # Initialize risk manager
+    risk_limits = RiskLimits(
+        max_drawdown=0.20,
+        max_daily_loss=0.05,
+        max_consecutive_losses=5,
+        cooldown_after_loss_seconds=300,
+        min_equity_floor=0.10,
+    )
+    risk_mgr = RiskManager(limits=risk_limits)
+
+    # ── Event Bus ──────────────────────────────────────────────────
+    event_bus = EventBus()
+
+    # ── Notification System ──────────────────────────────────────
+    notifier_config = {}
+    if telegram_bot_token and telegram_chat_id:
+        notifier_config["telegram"] = {
+            "bot_token": telegram_bot_token,
+            "chat_id": telegram_chat_id,
+        }
+    if webhook_url:
+        notifier_config["webhook"] = {"url": webhook_url}
+    notifier = create_notifier(notifier_config)
+
+    # Wire notifier to event bus for key events
+    def _on_risk_alert(evt: Event) -> None:
+        payload = evt.payload
+        notifier.send_alert(
+            level=payload.get("severity", "warning"),
+            title=f"Risk Alert: {payload.get('alert_type', 'unknown')}",
+            message=payload.get("message", ""),
+            data=payload.get("details"),
+        )
+
+    def _on_order_filled(evt: Event) -> None:
+        payload = evt.payload
+        notifier.send_alert(
+            level="info",
+            title=f"Order Filled: {payload.get('symbol', '')}",
+            message=f"{payload.get('side', '')} {payload.get('quantity', 0):.4f} @ {payload.get('price', 0):.2f}",
+            data=payload,
+        )
+
+    def _on_force_close(evt: Event) -> None:
+        notifier.send_alert(
+            level="critical",
+            title="Force Close Triggered",
+            message=evt.payload.get("message", "Positions force-closed by risk manager"),
+            data=evt.payload,
+        )
+
+    event_bus.subscribe(EventType.RISK_ALERT, _on_risk_alert)
+    event_bus.subscribe(EventType.ORDER_FILLED, _on_order_filled)
+    event_bus.subscribe(EventType.FORCE_CLOSE, _on_force_close)
+
+    # ── Audit Logger ─────────────────────────────────────────────
+    audit_logger = AuditLogger(log_dir=os.path.join(log_dir, "audit"))
+
+    # ── Database ─────────────────────────────────────────────────
+    db_manager = None
+    if enable_db and DB_AVAILABLE:
+        try:
+            db_manager = DatabaseManager(url=db_url)
+            db_manager.create_tables()
+            print(f"[DB] Database initialized: {db_manager.url}")
+        except Exception as exc:
+            logger.warning("Failed to initialize database: %s", exc)
+            db_manager = None
+    elif enable_db and not DB_AVAILABLE:
+        print("[DB] sqlalchemy not installed. Install with: pip install sqlalchemy>=2.0")
+
+    # ── Order Executor ───────────────────────────────────────────
+    order_executor = None
+    if execution_mode in ("paper", "live"):
+        order_executor = create_executor(
+            mode=execution_mode,
+            commission_rate=commission,
+            slippage=slippage,
+        )
+        print(f"[OMS] Order executor: {type(order_executor).__name__}")
+
+    # ── Read-Only Guard (safety for live mode) ───────────────────
+    read_only_guard = ReadOnlyGuard(enabled=False)
+
     session_logger = SessionLogger(log_dir)
     engine = RealTimeTradingEngine(
         market_data=market_data,
@@ -390,7 +578,48 @@ def _run_trading_session(
         net_exposure_cap=net_exposure_cap,
         max_open_positions=max_open_positions,
         max_turnover_per_step=max_turnover,
+        risk_manager=risk_mgr,
+        execution_mode=execution_mode,
+        order_executor=order_executor,
     )
+
+    # Store event bus and notifier on engine for access by other components
+    engine.event_bus = event_bus
+    engine.notifier = notifier
+    engine.audit_logger = audit_logger
+
+    # Register signal handlers for graceful shutdown
+    global _active_engine
+    _active_engine = engine
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    atexit.register(_atexit_handler)
+
+    # ── API Server ───────────────────────────────────────────────
+    api_thread = None
+    if enable_api and API_AVAILABLE:
+        api_thread = start_api_server(
+            host="0.0.0.0",
+            port=api_port,
+            engine=engine,
+            event_bus=event_bus,
+            db_manager=db_manager,
+        )
+        if api_thread is not None:
+            print(f"[API] Monitoring server started on http://localhost:{api_port}")
+    elif enable_api and not API_AVAILABLE:
+        print("[API] fastapi not installed. Install with: pip install fastapi uvicorn")
+
+    # Publish session start event
+    event_bus.publish(Event(
+        event_type=EventType.SESSION_START,
+        payload={
+            "execution_mode": execution_mode,
+            "symbols": uppercase_symbols,
+            "initial_capital": initial_capital,
+        },
+        source="main",
+    ))
 
     run_args = {
         "mode": mode,
@@ -417,13 +646,17 @@ def _run_trading_session(
         "net_exposure_cap": net_exposure_cap,
         "max_open_positions": max_open_positions,
         "max_turnover": max_turnover,
+        "execution_mode": execution_mode,
+        "enable_api": enable_api,
+        "enable_db": enable_db,
     }
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     try:
         summary = engine.run(duration_seconds=duration_seconds, reporter=reporter)
     except KeyboardInterrupt:
-        print("\nKeyboard interrupt received. Finalizing current session...")
+        print("\nKeyboard interrupt received. Closing positions and finalizing...")
+        engine.shutdown()
         summary = {
             "equity_history": engine.equity_history,
             "trade_log": engine.trade_log,
@@ -437,6 +670,7 @@ def _run_trading_session(
                 "available_margin": engine.account.available_margin,
             },
             "reports": reporter.finalize(engine.equity_history, engine.trade_log),
+            "risk_report": risk_mgr.get_risk_report(engine.account.equity),
         }
 
     session_end = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -451,13 +685,60 @@ def _run_trading_session(
     except Exception:
         pass
 
+    # ── Persist to Database ──────────────────────────────────────
+    if db_manager is not None:
+        try:
+            from repositories import (
+                SessionRepository, TradeRepository, DecisionRepository, EquityRepository,
+            )
+            with db_manager.session() as db_session:
+                session_repo = SessionRepository(db_session)
+                session_id = session_repo.create(
+                    initial_capital=initial_capital,
+                    execution_mode=execution_mode,
+                    config=run_args,
+                )
+                trade_repo = TradeRepository(db_session)
+                trade_repo.save_batch(session_id, summary.get("trade_log", []))
+
+                decision_repo = DecisionRepository(db_session)
+                for decision in summary.get("decision_log", []):
+                    decision_repo.save(session_id, decision)
+
+                equity_repo = EquityRepository(db_session)
+                for snap in summary.get("equity_history", []):
+                    equity_repo.save(session_id, snap)
+
+                session_repo.complete(
+                    session_id=session_id,
+                    final_equity=final_account.get("equity", 0.0),
+                    total_pnl=final_account.get("realized_pnl", 0.0),
+                    total_trades=len(summary.get("trade_log", [])),
+                )
+            print(f"[DB] Session {session_id} persisted to database")
+        except Exception as exc:
+            logger.warning("Failed to persist session to database: %s", exc)
+
+    # ── Publish Session End Event ────────────────────────────────
+    event_bus.publish(Event(
+        event_type=EventType.SESSION_END,
+        payload={
+            "final_equity": final_account.get("equity", 0.0),
+            "realized_pnl": final_account.get("realized_pnl", 0.0),
+            "total_trades": len(summary.get("trade_log", [])),
+        },
+        source="main",
+    ))
+
     final_account = summary.get("final_account", {})
     print("\n=== Session Metadata ===")
+    print(f"Execution mode: {execution_mode}")
     print(f"Final equity:   {final_account.get('equity', 0.0):.2f} USDT")
     print(f"Realized PnL:   {final_account.get('realized_pnl', 0.0):.2f} USDT")
     print(f"Unrealized PnL: {final_account.get('unrealized_pnl', 0.0):.2f} USDT")
     print(f"Trades logged:  {len(summary.get('trade_log', []))}")
-    print(f"Session log written to: {log_path}\n")
+    print(f"Session log written to: {log_path}")
+    print(f"Event bus stats: {event_bus.get_stats()}\n")
 
 
 def _interactive_cli(args: argparse.Namespace) -> None:
@@ -501,6 +782,14 @@ def _interactive_cli(args: argparse.Namespace) -> None:
             net_exposure_cap=args.net_exposure_cap,
             max_open_positions=args.max_open_positions,
             max_turnover=args.max_turnover,
+            execution_mode=args.execution_mode,
+            enable_api=args.enable_api,
+            api_port=args.api_port,
+            enable_db=args.enable_db,
+            db_url=args.db_url,
+            telegram_bot_token=args.telegram_bot_token,
+            telegram_chat_id=args.telegram_chat_id,
+            webhook_url=args.webhook_url,
         )
 
 
@@ -535,6 +824,14 @@ def main() -> None:
             net_exposure_cap=args.net_exposure_cap,
             max_open_positions=args.max_open_positions,
             max_turnover=args.max_turnover,
+            execution_mode=args.execution_mode,
+            enable_api=args.enable_api,
+            api_port=args.api_port,
+            enable_db=args.enable_db,
+            db_url=args.db_url,
+            telegram_bot_token=args.telegram_bot_token,
+            telegram_chat_id=args.telegram_chat_id,
+            webhook_url=args.webhook_url,
         )
 
 

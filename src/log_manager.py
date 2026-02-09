@@ -64,6 +64,7 @@ class SessionLogger:
                     {
                         "timestamp": entry.get("timestamp"),
                         "source": entry.get("source"),
+                        "action": entry.get("action", "REBALANCE"),
                         "reasoning": reasoning_text,
                         "requested_exposure": entry.get("requested_exposure"),
                         "applied_exposure": entry.get("applied_exposure"),

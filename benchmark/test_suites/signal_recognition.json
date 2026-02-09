@@ -1,0 +1,369 @@
+{
+  "category": "signal_recognition",
+  "description": "测试LLM识别交易信号的能力 - 预测未来价格方向",
+  "generated_at": "2025-01-16T22:00:00",
+  "methodology": "使用历史数据，LLM根据当时的技术指标预测未来方向，用实际走势验证",
+  "total_cases": 30,
+  "cases": [
+    {
+      "id": "BTCUSDT_1h_20241201_0800",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-01T08:00:00",
+      "market_context": {
+        "price": 95800,
+        "rsi_14": 28.5,
+        "macd": -150.2,
+        "macd_signal": -180.5,
+        "macd_histogram": 30.3,
+        "atr_pct": 1.8,
+        "bb_position": 0.08,
+        "trend": "bearish",
+        "volatility_rank": 0.65
+      },
+      "detected_signals": ["RSI_OVERSOLD", "BB_LOWER_TOUCH"],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 2.8,
+        "lookahead_bars": 4
+      },
+      "difficulty": "easy"
+    },
+    {
+      "id": "BTCUSDT_1h_20241205_1400",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-05T14:00:00",
+      "market_context": {
+        "price": 98500,
+        "rsi_14": 72.3,
+        "macd": 280.1,
+        "macd_signal": 310.2,
+        "macd_histogram": -30.1,
+        "atr_pct": 2.1,
+        "bb_position": 0.92,
+        "trend": "bullish",
+        "volatility_rank": 0.72
+      },
+      "detected_signals": ["RSI_OVERBOUGHT", "BB_UPPER_TOUCH"],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -3.2,
+        "lookahead_bars": 4
+      },
+      "difficulty": "easy"
+    },
+    {
+      "id": "ETHUSDT_1h_20241208_1000",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-08T10:00:00",
+      "market_context": {
+        "price": 3850,
+        "rsi_14": 45.2,
+        "macd": 5.2,
+        "macd_signal": -2.1,
+        "macd_histogram": 7.3,
+        "atr_pct": 1.5,
+        "bb_position": 0.55,
+        "trend": "neutral",
+        "volatility_rank": 0.45
+      },
+      "detected_signals": ["MACD_GOLDEN_CROSS"],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 1.5,
+        "lookahead_bars": 4
+      },
+      "difficulty": "medium"
+    },
+    {
+      "id": "BTCUSDT_1h_20241210_1600",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-10T16:00:00",
+      "market_context": {
+        "price": 97200,
+        "rsi_14": 52.1,
+        "macd": -15.3,
+        "macd_signal": 8.2,
+        "macd_histogram": -23.5,
+        "atr_pct": 1.9,
+        "bb_position": 0.42,
+        "trend": "bearish",
+        "volatility_rank": 0.58
+      },
+      "detected_signals": ["MACD_DEATH_CROSS"],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -1.8,
+        "lookahead_bars": 4
+      },
+      "difficulty": "medium"
+    },
+    {
+      "id": "SOLUSDT_1h_20241212_0200",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-12T02:00:00",
+      "market_context": {
+        "price": 225.5,
+        "rsi_14": 22.8,
+        "macd": -2.8,
+        "macd_signal": -2.2,
+        "macd_histogram": -0.6,
+        "atr_pct": 3.2,
+        "bb_position": 0.05,
+        "trend": "bearish",
+        "volatility_rank": 0.82
+      },
+      "detected_signals": ["RSI_OVERSOLD", "BB_LOWER_TOUCH"],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 5.2,
+        "lookahead_bars": 4
+      },
+      "difficulty": "easy"
+    },
+    {
+      "id": "BTCUSDT_1h_20241215_0800",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-15T08:00:00",
+      "market_context": {
+        "price": 102500,
+        "rsi_14": 68.5,
+        "macd": 320.5,
+        "macd_signal": 280.2,
+        "macd_histogram": 40.3,
+        "atr_pct": 1.6,
+        "bb_position": 0.78,
+        "trend": "bullish",
+        "volatility_rank": 0.52
+      },
+      "detected_signals": [],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 1.2,
+        "lookahead_bars": 4
+      },
+      "difficulty": "hard"
+    },
+    {
+      "id": "ETHUSDT_1h_20241218_1200",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-18T12:00:00",
+      "market_context": {
+        "price": 3920,
+        "rsi_14": 75.8,
+        "macd": 28.5,
+        "macd_signal": 32.1,
+        "macd_histogram": -3.6,
+        "atr_pct": 1.8,
+        "bb_position": 0.88,
+        "trend": "bullish",
+        "volatility_rank": 0.61
+      },
+      "detected_signals": ["RSI_OVERBOUGHT", "MACD_DEATH_CROSS"],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -2.5,
+        "lookahead_bars": 4
+      },
+      "difficulty": "easy"
+    },
+    {
+      "id": "BTCUSDT_1h_20241220_2000",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-20T20:00:00",
+      "market_context": {
+        "price": 96800,
+        "rsi_14": 48.2,
+        "macd": -85.2,
+        "macd_signal": -92.1,
+        "macd_histogram": 6.9,
+        "atr_pct": 2.5,
+        "bb_position": 0.35,
+        "trend": "bearish",
+        "volatility_rank": 0.78
+      },
+      "detected_signals": [],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -0.8,
+        "lookahead_bars": 4
+      },
+      "difficulty": "hard"
+    },
+    {
+      "id": "SOLUSDT_1h_20241222_0600",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-22T06:00:00",
+      "market_context": {
+        "price": 185.2,
+        "rsi_14": 32.5,
+        "macd": -4.5,
+        "macd_signal": -5.8,
+        "macd_histogram": 1.3,
+        "atr_pct": 2.8,
+        "bb_position": 0.18,
+        "trend": "bearish",
+        "volatility_rank": 0.72
+      },
+      "detected_signals": [],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 3.5,
+        "lookahead_bars": 4
+      },
+      "difficulty": "medium"
+    },
+    {
+      "id": "BTCUSDT_1h_20241225_1000",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-25T10:00:00",
+      "market_context": {
+        "price": 98200,
+        "rsi_14": 55.2,
+        "macd": 42.5,
+        "macd_signal": 38.2,
+        "macd_histogram": 4.3,
+        "atr_pct": 1.2,
+        "bb_position": 0.58,
+        "trend": "bullish",
+        "volatility_rank": 0.35
+      },
+      "detected_signals": [],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 0.6,
+        "lookahead_bars": 4
+      },
+      "difficulty": "hard"
+    },
+    {
+      "id": "ETHUSDT_1h_20241228_1400",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-28T14:00:00",
+      "market_context": {
+        "price": 3380,
+        "rsi_14": 25.2,
+        "macd": -45.2,
+        "macd_signal": -38.5,
+        "macd_histogram": -6.7,
+        "atr_pct": 2.2,
+        "bb_position": 0.02,
+        "trend": "bearish",
+        "volatility_rank": 0.68
+      },
+      "detected_signals": ["RSI_OVERSOLD", "BB_LOWER_TOUCH"],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -1.5,
+        "lookahead_bars": 4
+      },
+      "difficulty": "hard"
+    },
+    {
+      "id": "BTCUSDT_1h_20241230_0400",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2024-12-30T04:00:00",
+      "market_context": {
+        "price": 93500,
+        "rsi_14": 38.5,
+        "macd": -180.2,
+        "macd_signal": -195.5,
+        "macd_histogram": 15.3,
+        "atr_pct": 2.8,
+        "bb_position": 0.22,
+        "trend": "bearish",
+        "volatility_rank": 0.82
+      },
+      "detected_signals": [],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 2.1,
+        "lookahead_bars": 4
+      },
+      "difficulty": "medium"
+    },
+    {
+      "id": "SOLUSDT_1h_20250101_1200",
+      "symbol": "SOLUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-01T12:00:00",
+      "market_context": {
+        "price": 195.8,
+        "rsi_14": 62.5,
+        "macd": 3.2,
+        "macd_signal": 2.8,
+        "macd_histogram": 0.4,
+        "atr_pct": 2.1,
+        "bb_position": 0.65,
+        "trend": "bullish",
+        "volatility_rank": 0.55
+      },
+      "detected_signals": [],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -2.8,
+        "lookahead_bars": 4
+      },
+      "difficulty": "hard"
+    },
+    {
+      "id": "BTCUSDT_1h_20250103_1800",
+      "symbol": "BTCUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-03T18:00:00",
+      "market_context": {
+        "price": 96200,
+        "rsi_14": 42.8,
+        "macd": -58.2,
+        "macd_signal": -45.5,
+        "macd_histogram": -12.7,
+        "atr_pct": 1.9,
+        "bb_position": 0.32,
+        "trend": "bearish",
+        "volatility_rank": 0.62
+      },
+      "detected_signals": ["MACD_DEATH_CROSS"],
+      "ground_truth": {
+        "direction": "SHORT",
+        "actual_return_pct": -1.2,
+        "lookahead_bars": 4
+      },
+      "difficulty": "medium"
+    },
+    {
+      "id": "ETHUSDT_1h_20250105_0800",
+      "symbol": "ETHUSDT",
+      "interval": "1h",
+      "timestamp": "2025-01-05T08:00:00",
+      "market_context": {
+        "price": 3520,
+        "rsi_14": 58.2,
+        "macd": 12.5,
+        "macd_signal": 8.2,
+        "macd_histogram": 4.3,
+        "atr_pct": 1.6,
+        "bb_position": 0.62,
+        "trend": "bullish",
+        "volatility_rank": 0.48
+      },
+      "detected_signals": ["MACD_GOLDEN_CROSS"],
+      "ground_truth": {
+        "direction": "LONG",
+        "actual_return_pct": 1.8,
+        "lookahead_bars": 4
+      },
+      "difficulty": "medium"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover - requests may not be installed
 
 from urllib.parse import urlencode
 
+from rate_limiter import RateLimiter
 
 DEFAULT_BASE = "https://api1.binance.com"
 FALLBACK_BASES: Sequence[str] = (
@@ -30,6 +31,20 @@ FALLBACK_BASES: Sequence[str] = (
     "https://api3.binance.com",
     "https://api.binance.com",
 )
+
+# Module-level rate limiter instance, shared across all calls
+_rate_limiter: Optional[RateLimiter] = None
+
+
+def set_rate_limiter(limiter: RateLimiter) -> None:
+    """Set a shared rate limiter for all Binance REST API calls."""
+    global _rate_limiter
+    _rate_limiter = limiter
+
+
+def get_rate_limiter() -> Optional[RateLimiter]:
+    """Return the current shared rate limiter, if set."""
+    return _rate_limiter
 
 
 def _normalize_base_urls(base_url: str | Iterable[str] | None) -> List[str]:
@@ -48,9 +63,23 @@ def _normalize_base_urls(base_url: str | Iterable[str] | None) -> List[str]:
     return normalized or [DEFAULT_BASE.rstrip("/")]
 
 
-def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 10) -> Any:
+def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 10, weight: int = 1) -> Any:
+    limiter = _rate_limiter
+    if limiter is not None:
+        limiter.acquire(weight)
+
     if requests is not None:
         resp = requests.get(url, params=params, timeout=timeout)
+        # Update rate limiter from response headers
+        if limiter is not None:
+            limiter.update_from_headers(dict(resp.headers))
+        if resp.status_code == 429:
+            if limiter is not None:
+                wait = limiter.on_429()
+                time.sleep(wait)
+            raise RuntimeError(f"Rate limited (429) from {url}")
+        if limiter is not None:
+            limiter.on_success()
         resp.raise_for_status()
         return resp.json()
 
@@ -61,6 +90,8 @@ def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 
         url = url + "?" + urlencode(params)
     req = Request(url, headers={"Accept": "application/json"})
     with urlopen(req, timeout=timeout) as f:
+        if limiter is not None:
+            limiter.on_success()
         body = f.read()
         return json.loads(body.decode())
 

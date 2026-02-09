@@ -1,0 +1,359 @@
+{
+  "category": "consistency",
+  "description": "测试LLM对相似场景的决策一致性",
+  "generated_at": "2025-01-16T22:00:00",
+  "methodology": "对同一场景添加微小噪音，期望LLM给出一致的方向判断",
+  "total_cases": 25,
+  "cases": [
+    {
+      "id": "consistency_1_0",
+      "scenario_group": "scenario_1",
+      "variation": 0,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 28.5,
+        "macd_histogram": -150.2,
+        "atr_pct": 2.1,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_1_1",
+      "scenario_group": "scenario_1",
+      "variation": 1,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 27.2,
+        "macd_histogram": -148.5,
+        "atr_pct": 2.0,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_1_2",
+      "scenario_group": "scenario_1",
+      "variation": 2,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 29.8,
+        "macd_histogram": -152.1,
+        "atr_pct": 2.2,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_1_3",
+      "scenario_group": "scenario_1",
+      "variation": 3,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 26.5,
+        "macd_histogram": -155.0,
+        "atr_pct": 1.9,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_1_4",
+      "scenario_group": "scenario_1",
+      "variation": 4,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 30.1,
+        "macd_histogram": -147.8,
+        "atr_pct": 2.3,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_2_0",
+      "scenario_group": "scenario_2",
+      "variation": 0,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 72.5,
+        "macd_histogram": 45.2,
+        "atr_pct": 1.8,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_2_1",
+      "scenario_group": "scenario_2",
+      "variation": 1,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 71.2,
+        "macd_histogram": 43.8,
+        "atr_pct": 1.7,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_2_2",
+      "scenario_group": "scenario_2",
+      "variation": 2,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 74.0,
+        "macd_histogram": 46.5,
+        "atr_pct": 1.9,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_2_3",
+      "scenario_group": "scenario_2",
+      "variation": 3,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 70.8,
+        "macd_histogram": 44.2,
+        "atr_pct": 2.0,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_2_4",
+      "scenario_group": "scenario_2",
+      "variation": 4,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 73.5,
+        "macd_histogram": 47.0,
+        "atr_pct": 1.6,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_3_0",
+      "scenario_group": "scenario_3",
+      "variation": 0,
+      "symbol": "SOLUSDT",
+      "market_context": {
+        "rsi_14": 50.2,
+        "macd_histogram": 0.5,
+        "atr_pct": 2.5,
+        "trend": "neutral"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_3_1",
+      "scenario_group": "scenario_3",
+      "variation": 1,
+      "symbol": "SOLUSDT",
+      "market_context": {
+        "rsi_14": 49.5,
+        "macd_histogram": 0.3,
+        "atr_pct": 2.4,
+        "trend": "neutral"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_3_2",
+      "scenario_group": "scenario_3",
+      "variation": 2,
+      "symbol": "SOLUSDT",
+      "market_context": {
+        "rsi_14": 51.0,
+        "macd_histogram": 0.7,
+        "atr_pct": 2.6,
+        "trend": "neutral"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_3_3",
+      "scenario_group": "scenario_3",
+      "variation": 3,
+      "symbol": "SOLUSDT",
+      "market_context": {
+        "rsi_14": 48.8,
+        "macd_histogram": 0.2,
+        "atr_pct": 2.3,
+        "trend": "neutral"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_3_4",
+      "scenario_group": "scenario_3",
+      "variation": 4,
+      "symbol": "SOLUSDT",
+      "market_context": {
+        "rsi_14": 52.0,
+        "macd_histogram": 0.8,
+        "atr_pct": 2.7,
+        "trend": "neutral"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "同一scenario_group内的用例应该得到一致的方向判断"
+    },
+    {
+      "id": "consistency_4_0",
+      "scenario_group": "scenario_4",
+      "variation": 0,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 15.2,
+        "macd_histogram": -280.5,
+        "atr_pct": 3.8,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超卖场景"
+    },
+    {
+      "id": "consistency_4_1",
+      "scenario_group": "scenario_4",
+      "variation": 1,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 14.5,
+        "macd_histogram": -275.2,
+        "atr_pct": 3.6,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超卖场景"
+    },
+    {
+      "id": "consistency_4_2",
+      "scenario_group": "scenario_4",
+      "variation": 2,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 16.0,
+        "macd_histogram": -285.0,
+        "atr_pct": 4.0,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超卖场景"
+    },
+    {
+      "id": "consistency_4_3",
+      "scenario_group": "scenario_4",
+      "variation": 3,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 13.8,
+        "macd_histogram": -290.2,
+        "atr_pct": 3.5,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超卖场景"
+    },
+    {
+      "id": "consistency_4_4",
+      "scenario_group": "scenario_4",
+      "variation": 4,
+      "symbol": "BTCUSDT",
+      "market_context": {
+        "rsi_14": 17.2,
+        "macd_histogram": -270.8,
+        "atr_pct": 4.2,
+        "trend": "bearish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超卖场景"
+    },
+    {
+      "id": "consistency_5_0",
+      "scenario_group": "scenario_5",
+      "variation": 0,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 85.5,
+        "macd_histogram": 78.2,
+        "atr_pct": 2.2,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超买场景"
+    },
+    {
+      "id": "consistency_5_1",
+      "scenario_group": "scenario_5",
+      "variation": 1,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 84.2,
+        "macd_histogram": 76.5,
+        "atr_pct": 2.1,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超买场景"
+    },
+    {
+      "id": "consistency_5_2",
+      "scenario_group": "scenario_5",
+      "variation": 2,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 86.8,
+        "macd_histogram": 80.0,
+        "atr_pct": 2.3,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超买场景"
+    },
+    {
+      "id": "consistency_5_3",
+      "scenario_group": "scenario_5",
+      "variation": 3,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 83.5,
+        "macd_histogram": 75.0,
+        "atr_pct": 2.0,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超买场景"
+    },
+    {
+      "id": "consistency_5_4",
+      "scenario_group": "scenario_5",
+      "variation": 4,
+      "symbol": "ETHUSDT",
+      "market_context": {
+        "rsi_14": 87.5,
+        "macd_histogram": 82.5,
+        "atr_pct": 2.4,
+        "trend": "bullish"
+      },
+      "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
+      "note": "极端超买场景"
+    }
+  ]
+}

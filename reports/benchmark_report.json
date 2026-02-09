@@ -1,0 +1,2300 @@
+{
+  "leaderboard": [
+    {
+      "provider": "deepseek",
+      "total_score": 69.91,
+      "market_regime": "sideways",
+      "signal": 50.0,
+      "risk": 90.74,
+      "efficiency": 62.96,
+      "consistency": 68.1,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "openai",
+      "total_score": 68.0,
+      "market_regime": "sideways",
+      "signal": 55.0,
+      "risk": 90.73,
+      "efficiency": 41.95,
+      "consistency": 68.11,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "openai",
+      "total_score": 67.09,
+      "market_regime": "sideways",
+      "signal": 50.0,
+      "risk": 90.93,
+      "efficiency": 50.0,
+      "consistency": 62.0,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "openai",
+      "total_score": 64.93,
+      "market_regime": "sideways",
+      "signal": 41.47,
+      "risk": 90.89,
+      "efficiency": 41.98,
+      "consistency": 69.89,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 64.81,
+      "market_regime": "sideways",
+      "signal": 41.13,
+      "risk": 90.77,
+      "efficiency": 41.88,
+      "consistency": 69.97,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 64.29,
+      "market_regime": "sideways",
+      "signal": 38.39,
+      "risk": 90.98,
+      "efficiency": 42.0,
+      "consistency": 70.64,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 63.91,
+      "market_regime": "sideways",
+      "signal": 37.16,
+      "risk": 90.91,
+      "efficiency": 41.97,
+      "consistency": 70.28,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "openai",
+      "total_score": 61.6,
+      "market_regime": "sideways",
+      "signal": 27.86,
+      "risk": 90.95,
+      "efficiency": 41.98,
+      "consistency": 70.29,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 61.0,
+      "market_regime": "sideways",
+      "signal": 25.0,
+      "risk": 91.0,
+      "efficiency": 42.0,
+      "consistency": 70.99,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 60.99,
+      "market_regime": "sideways",
+      "signal": 25.0,
+      "risk": 91.0,
+      "efficiency": 42.0,
+      "consistency": 70.95,
+      "adaptability": 71.0,
+      "reasoning": 89.5
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 60.27,
+      "market_regime": "bear",
+      "signal": 26.73,
+      "risk": 86.03,
+      "efficiency": 40.36,
+      "consistency": 81.0,
+      "adaptability": 67.83,
+      "reasoning": 80.03
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 57.56,
+      "market_regime": "bear",
+      "signal": 15.67,
+      "risk": 86.78,
+      "efficiency": 40.51,
+      "consistency": 78.9,
+      "adaptability": 68.52,
+      "reasoning": 80.93
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 53.22,
+      "market_regime": "bear",
+      "signal": 27.0,
+      "risk": 86.73,
+      "efficiency": 38.02,
+      "consistency": 41.0,
+      "adaptability": 63.0,
+      "reasoning": 78.25
+    },
+    {
+      "provider": "deepseek",
+      "total_score": 51.22,
+      "market_regime": "bear",
+      "signal": 28.7,
+      "risk": 81.03,
+      "efficiency": 35.27,
+      "consistency": 41.0,
+      "adaptability": 63.0,
+      "reasoning": 69.5
+    }
+  ],
+  "comparison": {
+    "deepseek": {
+      "avg_total_score": 60.72,
+      "sessions_count": 10,
+      "factor_averages": {
+        "s": 0.0,
+        "i": 0.0,
+        "g": 0.0,
+        "n": 0.0,
+        "a": 0.0,
+        "l": 0.0
+      }
+    },
+    "openai": {
+      "avg_total_score": 65.4,
+      "sessions_count": 4,
+      "factor_averages": {
+        "s": 0.0,
+        "i": 0.0,
+        "g": 0.0,
+        "n": 0.0,
+        "a": 0.0,
+        "l": 0.0
+      }
+    }
+  },
+  "detailed_results": [
+    {
+      "session_id": "session_deepseek_20251120_090129.683438_12943",
+      "provider": "deepseek",
+      "total_score": 60.99,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 25.0,
+          "weight": 0.25,
+          "weighted_score": 6.25,
+          "details": {
+            "win_rate": 0.0,
+            "total_decisions": 2
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 0.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 91.0,
+          "weight": 0.2,
+          "weighted_score": 18.2,
+          "details": {
+            "max_drawdown_pct": 0.0
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.99
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 42.0,
+          "weight": 0.15,
+          "weighted_score": 6.3,
+          "details": {
+            "total_trades": 40,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 30.0
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 70.95,
+          "weight": 0.15,
+          "weighted_score": 10.64,
+          "details": {
+            "total_decisions": 2,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 99.82
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 2
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251230_081546.434475_46007",
+      "provider": "deepseek",
+      "total_score": 57.56,
+      "market_regime": "bear",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 15.67,
+          "weight": 0.25,
+          "weighted_score": 3.92,
+          "details": {
+            "win_rate": 0.0,
+            "total_decisions": 7
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 0.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 31.34
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 86.78,
+          "weight": 0.2,
+          "weighted_score": 17.36,
+          "details": {
+            "max_drawdown_pct": 5.28
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 89.44
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 40.51,
+          "weight": 0.15,
+          "weighted_score": 6.08,
+          "details": {
+            "total_trades": 69,
+            "total_costs": 1511.62
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 26.28
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 78.9,
+          "weight": 0.15,
+          "weighted_score": 11.83,
+          "details": {
+            "total_decisions": 7,
+            "hold_count": 6
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 88.57
+            },
+            {
+              "name": "exposure_stability",
+              "score": 74.9
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 68.52,
+          "weight": 0.15,
+          "weighted_score": 10.28,
+          "details": {
+            "market_regime": "bear"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 73.8
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 80.93,
+          "weight": 0.1,
+          "weighted_score": 8.09,
+          "details": {
+            "total_reasonings": 7
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 71.43
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": 100000.0,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_openai_20251119_133643.877298_96259",
+      "provider": "openai",
+      "total_score": 68.0,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 55.0,
+          "weight": 0.25,
+          "weighted_score": 13.75,
+          "details": {
+            "win_rate": 60.0,
+            "total_decisions": 3
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 60.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.73,
+          "weight": 0.2,
+          "weighted_score": 18.15,
+          "details": {
+            "max_drawdown_pct": 0.34
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.33
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 41.95,
+          "weight": 0.15,
+          "weighted_score": 6.29,
+          "details": {
+            "total_trades": 57,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.88
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 68.11,
+          "weight": 0.15,
+          "weighted_score": 10.22,
+          "details": {
+            "total_decisions": 3,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 90.36
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 3
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_openai_20251119_080025.265444_85121",
+      "provider": "openai",
+      "total_score": 64.93,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 41.47,
+          "weight": 0.25,
+          "weighted_score": 10.37,
+          "details": {
+            "win_rate": 32.94117647058823,
+            "total_decisions": 6
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 32.94
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.89,
+          "weight": 0.2,
+          "weighted_score": 18.18,
+          "details": {
+            "max_drawdown_pct": 0.13
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.74
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 41.98,
+          "weight": 0.15,
+          "weighted_score": 6.3,
+          "details": {
+            "total_trades": 167,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.96
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 69.89,
+          "weight": 0.15,
+          "weighted_score": 10.48,
+          "details": {
+            "total_decisions": 6,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 96.3
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 6
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251229_150411.225225_21734",
+      "provider": "deepseek",
+      "total_score": 60.27,
+      "market_regime": "bear",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 26.73,
+          "weight": 0.25,
+          "weighted_score": 6.68,
+          "details": {
+            "win_rate": 25.0,
+            "total_decisions": 19
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 25.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 28.46
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 86.03,
+          "weight": 0.2,
+          "weighted_score": 17.21,
+          "details": {
+            "max_drawdown_pct": 6.21
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 87.59
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 40.36,
+          "weight": 0.15,
+          "weighted_score": 6.05,
+          "details": {
+            "total_trades": 137,
+            "total_costs": 6688.73
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 25.91
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 81.0,
+          "weight": 0.15,
+          "weighted_score": 12.15,
+          "details": {
+            "total_decisions": 19,
+            "hold_count": 6
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 100
+            },
+            {
+              "name": "exposure_stability",
+              "score": 66.67
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 67.83,
+          "weight": 0.15,
+          "weighted_score": 10.17,
+          "details": {
+            "market_regime": "bear"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 72.08
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 80.03,
+          "weight": 0.1,
+          "weighted_score": 8.0,
+          "details": {
+            "total_reasonings": 19
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 68.42
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": 100000.0,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_openai_20251119_083044.763003_86293",
+      "provider": "openai",
+      "total_score": 61.6,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 27.86,
+          "weight": 0.25,
+          "weighted_score": 6.96,
+          "details": {
+            "win_rate": 5.714285714285714,
+            "total_decisions": 4
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 5.71
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.95,
+          "weight": 0.2,
+          "weighted_score": 18.19,
+          "details": {
+            "max_drawdown_pct": 0.06
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.89
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 41.98,
+          "weight": 0.15,
+          "weighted_score": 6.3,
+          "details": {
+            "total_trades": 93,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.95
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 70.29,
+          "weight": 0.15,
+          "weighted_score": 10.54,
+          "details": {
+            "total_decisions": 4,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 97.64
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 4
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251120_040622.802438_2298",
+      "provider": "deepseek",
+      "total_score": 63.91,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 37.16,
+          "weight": 0.25,
+          "weighted_score": 9.29,
+          "details": {
+            "win_rate": 24.324324324324326,
+            "total_decisions": 4
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 24.32
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.91,
+          "weight": 0.2,
+          "weighted_score": 18.18,
+          "details": {
+            "max_drawdown_pct": 0.11
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.77
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 41.97,
+          "weight": 0.15,
+          "weighted_score": 6.3,
+          "details": {
+            "total_trades": 91,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.92
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 70.28,
+          "weight": 0.15,
+          "weighted_score": 10.54,
+          "details": {
+            "total_decisions": 4,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 97.6
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 4
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251229_052234.280580_17077",
+      "provider": "deepseek",
+      "total_score": 53.22,
+      "market_regime": "bear",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 27.0,
+          "weight": 0.25,
+          "weighted_score": 6.75,
+          "details": {
+            "win_rate": 4.0,
+            "total_decisions": 8
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 4.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 86.73,
+          "weight": 0.2,
+          "weighted_score": 17.35,
+          "details": {
+            "max_drawdown_pct": 5.34
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 89.32
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 38.02,
+          "weight": 0.15,
+          "weighted_score": 5.7,
+          "details": {
+            "total_trades": 121,
+            "total_costs": 10601.95
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 20.06
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 41.0,
+          "weight": 0.15,
+          "weighted_score": 6.15,
+          "details": {
+            "total_decisions": 8,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 0
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 63.0,
+          "weight": 0.15,
+          "weighted_score": 9.45,
+          "details": {
+            "market_regime": "bear"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 60
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 78.25,
+          "weight": 0.1,
+          "weighted_score": 7.83,
+          "details": {
+            "total_reasonings": 8
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 62.5
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": 100000.0,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251229_051241.199353_16438",
+      "provider": "deepseek",
+      "total_score": 69.91,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 50.0,
+          "weight": 0.25,
+          "weighted_score": 12.5,
+          "details": {
+            "win_rate": 50.0,
+            "total_decisions": 3
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 50.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.74,
+          "weight": 0.2,
+          "weighted_score": 18.15,
+          "details": {
+            "max_drawdown_pct": 0.32
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.36
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 62.96,
+          "weight": 0.15,
+          "weighted_score": 9.44,
+          "details": {
+            "total_trades": 16,
+            "total_costs": 293.5
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.9
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 100
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 68.1,
+          "weight": 0.15,
+          "weighted_score": 10.22,
+          "details": {
+            "total_decisions": 3,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 90.34
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 3
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 21600.0,
+        "symbols_count": 20,
+        "initial_capital": 100000.0,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251120_034937.938546_1156",
+      "provider": "deepseek",
+      "total_score": 64.29,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 38.39,
+          "weight": 0.25,
+          "weighted_score": 9.6,
+          "details": {
+            "win_rate": 26.785714285714285,
+            "total_decisions": 5
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 26.79
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.98,
+          "weight": 0.2,
+          "weighted_score": 18.2,
+          "details": {
+            "max_drawdown_pct": 0.02
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.96
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 42.0,
+          "weight": 0.15,
+          "weighted_score": 6.3,
+          "details": {
+            "total_trades": 114,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.99
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 70.64,
+          "weight": 0.15,
+          "weighted_score": 10.6,
+          "details": {
+            "total_decisions": 5,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 98.81
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 5
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251120_050131.468307_5162",
+      "provider": "deepseek",
+      "total_score": 61.0,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 25.0,
+          "weight": 0.25,
+          "weighted_score": 6.25,
+          "details": {
+            "win_rate": 0.0,
+            "total_decisions": 15
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 0.0
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 91.0,
+          "weight": 0.2,
+          "weighted_score": 18.2,
+          "details": {
+            "max_drawdown_pct": 0.0
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.99
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 42.0,
+          "weight": 0.15,
+          "weighted_score": 6.3,
+          "details": {
+            "total_trades": 104,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 30.0
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 70.99,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "total_decisions": 15,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 99.97
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 15
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251228_142458.740425_10689",
+      "provider": "deepseek",
+      "total_score": 51.22,
+      "market_regime": "bear",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 28.7,
+          "weight": 0.25,
+          "weighted_score": 7.18,
+          "details": {
+            "win_rate": 7.4074074074074066,
+            "total_decisions": 10
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 7.41
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 81.03,
+          "weight": 0.2,
+          "weighted_score": 16.21,
+          "details": {
+            "max_drawdown_pct": 12.46
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 75.09
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 35.27,
+          "weight": 0.15,
+          "weighted_score": 5.29,
+          "details": {
+            "total_trades": 199,
+            "total_costs": 8056.64
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 13.17
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 41.0,
+          "weight": 0.15,
+          "weighted_score": 6.15,
+          "details": {
+            "total_decisions": 10,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 0
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 63.0,
+          "weight": 0.15,
+          "weighted_score": 9.45,
+          "details": {
+            "market_regime": "bear"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 60
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 69.5,
+          "weight": 0.1,
+          "weighted_score": 6.95,
+          "details": {
+            "total_reasonings": 10
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 50
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": 100000.0,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_deepseek_20251120_042954.423960_3572",
+      "provider": "deepseek",
+      "total_score": 64.81,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 41.13,
+          "weight": 0.25,
+          "weighted_score": 10.28,
+          "details": {
+            "win_rate": 32.25806451612903,
+            "total_decisions": 8
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 32.26
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.77,
+          "weight": 0.2,
+          "weighted_score": 18.15,
+          "details": {
+            "max_drawdown_pct": 0.29
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.42
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 41.88,
+          "weight": 0.15,
+          "weighted_score": 6.28,
+          "details": {
+            "total_trades": 160,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 29.71
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 69.97,
+          "weight": 0.15,
+          "weighted_score": 10.5,
+          "details": {
+            "total_decisions": 8,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 96.58
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 8
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    },
+    {
+      "session_id": "session_openai_20251119_063259.790171_82872",
+      "provider": "openai",
+      "total_score": 67.09,
+      "market_regime": "sideways",
+      "factors": [
+        {
+          "name": "signal",
+          "score": 50.0,
+          "weight": 0.25,
+          "weighted_score": 12.5,
+          "details": {
+            "win_rate": 50,
+            "total_decisions": 1
+          },
+          "sub_factors": [
+            {
+              "name": "direction_accuracy",
+              "score": 50
+            },
+            {
+              "name": "signal_quality",
+              "score": 50.0
+            }
+          ]
+        },
+        {
+          "name": "risk",
+          "score": 90.93,
+          "weight": 0.2,
+          "weighted_score": 18.19,
+          "details": {
+            "max_drawdown_pct": 0.09
+          },
+          "sub_factors": [
+            {
+              "name": "max_drawdown_score",
+              "score": 99.82
+            },
+            {
+              "name": "leverage_discipline",
+              "score": 100
+            },
+            {
+              "name": "position_sizing",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "efficiency",
+          "score": 50.0,
+          "weight": 0.15,
+          "weighted_score": 7.5,
+          "details": {
+            "total_trades": 18,
+            "total_costs": 0
+          },
+          "sub_factors": [
+            {
+              "name": "cost_efficiency",
+              "score": 50
+            },
+            {
+              "name": "turnover_efficiency",
+              "score": 30
+            },
+            {
+              "name": "holding_period",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "consistency",
+          "score": 62.0,
+          "weight": 0.15,
+          "weighted_score": 9.3,
+          "details": {
+            "total_decisions": 1,
+            "hold_count": 0
+          },
+          "sub_factors": [
+            {
+              "name": "action_consistency",
+              "score": 50.0
+            },
+            {
+              "name": "exposure_stability",
+              "score": 70
+            },
+            {
+              "name": "reasoning_consistency",
+              "score": 70
+            }
+          ]
+        },
+        {
+          "name": "adaptability",
+          "score": 71.0,
+          "weight": 0.15,
+          "weighted_score": 10.65,
+          "details": {
+            "market_regime": "sideways"
+          },
+          "sub_factors": [
+            {
+              "name": "regime_adaptation",
+              "score": 80
+            },
+            {
+              "name": "volatility_response",
+              "score": 65
+            },
+            {
+              "name": "trend_following",
+              "score": 65
+            }
+          ]
+        },
+        {
+          "name": "reasoning",
+          "score": 89.5,
+          "weight": 0.1,
+          "weighted_score": 8.95,
+          "details": {
+            "total_reasonings": 1
+          },
+          "sub_factors": [
+            {
+              "name": "reasoning_completeness",
+              "score": 100
+            },
+            {
+              "name": "indicator_usage",
+              "score": 100.0
+            },
+            {
+              "name": "logic_coherence",
+              "score": 65
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "duration_seconds": 3600.0,
+        "symbols_count": 20,
+        "initial_capital": null,
+        "max_leverage": 30
+      }
+    }
+  ]
+}
