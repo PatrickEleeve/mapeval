@@ -73,7 +73,7 @@ def _fetch_symbol_history(
 class BaseMarketData:
     """Shared interface and methods for market data providers."""
 
-    symbols: list
+    symbols: List[str]
     lookback: int
     price_history: pd.DataFrame
 

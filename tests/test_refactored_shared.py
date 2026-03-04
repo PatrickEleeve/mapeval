@@ -104,14 +104,14 @@ class TestSanitizeExposures:
 
 class MockTools:
     """Mock tools for testing fallback exposures."""
-    def calculate_moving_average(self, symbol, time, window):
+    def calculate_moving_average(self, symbol: str, time: pd.Timestamp, window: int) -> float:
         if window == 21:
             return 55000.0
         if window == 63:
             return 50000.0
         return None
 
-    def calculate_volatility(self, symbol, time, window):
+    def calculate_volatility(self, symbol: str, time: pd.Timestamp, window: int) -> float:
         return 0.02
 
 
