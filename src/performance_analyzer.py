@@ -42,8 +42,9 @@ class PerformanceAnalyzer:
         
         return returns
     
-    def calculate_sharpe_ratio(self) -> Optional[float]:
-        returns = self.calculate_returns()
+    def calculate_sharpe_ratio(self, returns: Optional[List[float]] = None) -> Optional[float]:
+        if returns is None:
+            returns = self.calculate_returns()
         if len(returns) < 2:
             return None
         
@@ -59,8 +60,9 @@ class PerformanceAnalyzer:
         
         return (annualized_return - self.risk_free_rate) / annualized_std
     
-    def calculate_sortino_ratio(self) -> Optional[float]:
-        returns = self.calculate_returns()
+    def calculate_sortino_ratio(self, returns: Optional[List[float]] = None) -> Optional[float]:
+        if returns is None:
+            returns = self.calculate_returns()
         if len(returns) < 2:
             return None
         
@@ -245,6 +247,7 @@ class PerformanceAnalyzer:
         total_return = (end_equity - start_equity) / start_equity if start_equity > 0 else 0
         
         max_dd, dd_start, dd_end = self.calculate_max_drawdown()
+        returns = self.calculate_returns()
         
         return {
             "summary": {
@@ -256,8 +259,8 @@ class PerformanceAnalyzer:
                 "drawdown_end": str(dd_end) if dd_end else None,
             },
             "risk_metrics": {
-                "sharpe_ratio": self.calculate_sharpe_ratio(),
-                "sortino_ratio": self.calculate_sortino_ratio(),
+                "sharpe_ratio": self.calculate_sharpe_ratio(returns),
+                "sortino_ratio": self.calculate_sortino_ratio(returns),
                 "calmar_ratio": self.calculate_calmar_ratio(),
             },
             "trade_metrics": {
