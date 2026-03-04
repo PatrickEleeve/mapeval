@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from exposure_utils import compute_fallback_exposures, sanitize_exposures
+
 try:
     from openai import AsyncOpenAI
 except ImportError:
@@ -193,78 +195,36 @@ class AsyncLLMAgent:
     
     def _sanitize_exposures(self, exposures: Dict[str, Any]) -> Optional[Dict[str, float]]:
         self.last_sanitization_notes = []
-        sanitized: Dict[str, float] = {}
-        per_symbol_cap = max(0.0, self.per_symbol_max_exposure)
-        delta_cap = max(0.0, self.max_exposure_delta)
-        prev = self._last_exposures or {symbol: 0.0 for symbol in self.symbols}
-        
-        for symbol in self.symbols:
-            raw = exposures.get(symbol, 0.0)
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                return None
-            
-            clipped = value
-            if per_symbol_cap > 0.0:
-                bounded = max(-per_symbol_cap, min(per_symbol_cap, clipped))
-                if bounded != clipped:
-                    self.last_sanitization_notes.append(
-                        f"{symbol}: clipped {clipped:.4f} -> {bounded:.4f}"
-                    )
-                clipped = bounded
-            
-            if delta_cap > 0.0:
-                prior = prev.get(symbol, 0.0)
-                bounded = max(prior - delta_cap, min(prior + delta_cap, clipped))
-                if bounded != clipped:
-                    self.last_sanitization_notes.append(
-                        f"{symbol}: delta limited {clipped:.4f} -> {bounded:.4f}"
-                    )
-                clipped = bounded
-            
-            sanitized[symbol] = clipped
-        
-        if self.max_leverage <= 0.0:
-            sanitized = {symbol: 0.0 for symbol in sanitized}
-        else:
-            total_abs = sum(abs(v) for v in sanitized.values())
-            if total_abs > self.max_leverage + 1e-9 and total_abs > 0.0:
-                scale = self.max_leverage / total_abs
-                sanitized = {s: v * scale for s, v in sanitized.items()}
-                self.last_sanitization_notes.append(f"Scaled by {scale:.4f}")
-        
-        self._last_exposures = dict(sanitized)
-        return {s: round(v, 6) for s, v in sanitized.items()}
+        result = sanitize_exposures(
+            exposures=exposures,
+            symbols=self.symbols,
+            per_symbol_max_exposure=self.per_symbol_max_exposure,
+            max_exposure_delta=self.max_exposure_delta,
+            max_leverage=self.max_leverage,
+            last_exposures=self._last_exposures,
+            sanitization_notes=self.last_sanitization_notes,
+        )
+        if result is not None:
+            self._last_exposures = dict(result)
+        return result
     
     async def _fallback_exposures_async(
         self,
         current_time: pd.Timestamp,
         available_tools: Any,
     ) -> Dict[str, float]:
-        raw_exposures: Dict[str, float] = {}
-        for symbol in self.symbols:
-            short_ma = available_tools.calculate_moving_average(symbol, current_time, 21)
-            long_ma = available_tools.calculate_moving_average(symbol, current_time, 63)
-            volatility = available_tools.calculate_volatility(symbol, current_time, 63)
-            
-            exposure = 0.0
-            if short_ma is not None and long_ma is not None and long_ma > 0.0:
-                momentum = (short_ma - long_ma) / long_ma
-                exposure = momentum * 10.0
-            
-            if volatility is not None and volatility > 0.0:
-                dampener = max(0.25, min(1.5, 0.02 / volatility))
-                exposure *= dampener
-            
-            exposure = max(-self.max_leverage, min(self.max_leverage, exposure))
-            raw_exposures[symbol] = exposure
-        
+        raw_exposures = compute_fallback_exposures(
+            symbols=self.symbols,
+            current_time=current_time,
+            available_tools=available_tools,
+            max_leverage=self.max_leverage,
+        )
+
         sanitized = self._sanitize_exposures(raw_exposures)
         if sanitized is None:
             sanitized = {symbol: 0.0 for symbol in self.symbols}
             self._last_exposures = dict(sanitized)
-        
+
         self.last_reasoning = "Async fallback: momentum-based heuristic"
         return sanitized
 

@@ -70,7 +70,31 @@ def _fetch_symbol_history(
     return df
 
 
-class RealTimeMarketData:
+class BaseMarketData:
+    """Shared interface and methods for market data providers."""
+
+    symbols: list
+    lookback: int
+    price_history: pd.DataFrame
+
+    def get_recent_window(self, rows: int = 120) -> pd.DataFrame:
+        """Return the most recent slice of price history as a DataFrame with a Date column."""
+        window = self.price_history.tail(rows).copy()
+        window = window.reset_index()
+        return window
+
+    def latest_prices(self) -> Dict[str, float]:
+        if self.price_history.empty:
+            return {}
+        last_row = self.price_history.iloc[-1]
+        return {
+            symbol: float(last_row[f"{symbol}_Close"])
+            for symbol in self.symbols
+            if f"{symbol}_Close" in last_row
+        }
+
+
+class RealTimeMarketData(BaseMarketData):
     """Maintain an up-to-date intraday price history for multiple symbols."""
 
     def __init__(
@@ -228,19 +252,6 @@ class RealTimeMarketData:
         history = history.ffill().tail(self.lookback)
         self.price_history = history
 
-    def get_recent_window(self, rows: int = 120) -> pd.DataFrame:
-        """Return the most recent slice of price history as a DataFrame with a Date column."""
-        window = self.price_history.tail(rows).copy()
-        window = window.reset_index()
-        return window
-
-    def latest_prices(self) -> Dict[str, float]:
-        last_row = self.price_history.iloc[-1]
-        return {
-            symbol: float(last_row[f"{symbol}_Close"])
-            for symbol in self.symbols
-        }
-
     def to_dataframe(self) -> pd.DataFrame:
         """Return the full buffered history with Date column included."""
         return self.price_history.reset_index()
@@ -258,7 +269,7 @@ def _attempt_binance_load(symbol: str, interval: str = "1d") -> pd.DataFrame:
     return df
 
 
-class BacktestMarketData:
+class BacktestMarketData(BaseMarketData):
     """Simulate market data replay from a historical DataFrame."""
 
     def __init__(
@@ -307,21 +318,6 @@ class BacktestMarketData:
             self.price_history = pd.concat([self.price_history, next_row])
             self.price_history = self.price_history.tail(self.lookback)
             self.current_idx += 1
-
-    def get_recent_window(self, rows: int = 120) -> pd.DataFrame:
-        window = self.price_history.tail(rows).copy()
-        window = window.reset_index()
-        return window
-
-    def latest_prices(self) -> Dict[str, float]:
-        if self.price_history.empty:
-            return {}
-        last_row = self.price_history.iloc[-1]
-        return {
-            symbol: float(last_row[f"{symbol}_Close"])
-            for symbol in self.symbols
-            if f"{symbol}_Close" in last_row
-        }
 
     def refresh_funding_rates(self, throttle_seconds: int = 60) -> Dict[str, float]:
         return {}
