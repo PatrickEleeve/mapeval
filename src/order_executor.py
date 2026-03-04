@@ -65,12 +65,8 @@ class OrderExecutor(ABC):
         ...
 
 
-class SimulationExecutor(OrderExecutor):
-    """Executes orders with instant simulated fills.
-
-    Replicates the current behavior of _rebalance_position() with slippage
-    and commission modeling.
-    """
+class SimulatedExecutorBase(OrderExecutor):
+    """Shared logic for executors that simulate order fills with slippage and commission."""
 
     def __init__(
         self,
@@ -84,87 +80,8 @@ class SimulationExecutor(OrderExecutor):
         self._positions: Dict[str, PositionInfo] = {}
         self._order_history: List[OrderResult] = []
 
-    def submit_order(self, order: Order) -> OrderResult:
-        if order.price is None or order.price <= 0:
-            return OrderResult(
-                order=order,
-                status=OrderStatus.REJECTED,
-                reject_reason="No valid price for simulation",
-            )
-
-        # Apply slippage
-        if order.side == OrderSide.BUY:
-            exec_price = order.price * (1 + self._slippage)
-        else:
-            exec_price = order.price * (1 - self._slippage)
-
-        commission = abs(order.quantity * exec_price) * self._commission_rate
-        slippage_cost = abs(order.quantity * order.price * self._slippage)
-
-        fill = Fill(
-            fill_id=str(uuid.uuid4())[:12],
-            price=exec_price,
-            quantity=order.quantity,
-            commission=commission,
-        )
-
-        result = OrderResult(
-            order=order,
-            status=OrderStatus.FILLED,
-            exchange_order_id=f"SIM-{uuid.uuid4().hex[:8]}",
-            filled_quantity=order.quantity,
-            avg_fill_price=exec_price,
-            total_commission=commission,
-            total_slippage_cost=slippage_cost,
-            fills=[fill],
-        )
-        self._order_history.append(result)
-        return result
-
-    def cancel_order(self, symbol: str, order_id: str) -> bool:
-        return True  # Simulation: orders fill instantly, nothing to cancel
-
-    def get_order_status(self, symbol: str, order_id: str) -> OrderStatus:
-        return OrderStatus.FILLED  # Simulation: always filled
-
-    def sync_positions(self) -> Dict[str, PositionInfo]:
-        return dict(self._positions)
-
-    def sync_balance(self) -> float:
-        return self._balance
-
-    def get_execution_mode(self) -> str:
-        return "simulation"
-
-
-class PaperExecutor(OrderExecutor):
-    """Executes orders using real market data but simulated fills.
-
-    Adds realistic latency simulation and depth-based fill modeling.
-    """
-
-    def __init__(
-        self,
-        commission_rate: float = 0.0005,
-        slippage: float = 0.0003,
-        fill_latency_ms: float = 50.0,
-        market_data_provider=None,
-    ) -> None:
-        self._commission_rate = commission_rate
-        self._slippage = slippage
-        self._fill_latency_ms = fill_latency_ms
-        self._market_data = market_data_provider
-        self._balance: float = 0.0
-        self._positions: Dict[str, PositionInfo] = {}
-        self._order_history: List[OrderResult] = []
-        self._pending_orders: Dict[str, Order] = {}
-
-    def submit_order(self, order: Order) -> OrderResult:
-        # Simulate fill latency
-        if self._fill_latency_ms > 0:
-            time.sleep(self._fill_latency_ms / 1000.0)
-
-        # Get current market price if available
+    def _simulate_fill(self, order: Order, order_id_prefix: str) -> OrderResult:
+        """Execute a simulated fill with slippage and commission modeling."""
         price = order.price
         if price is None or price <= 0:
             return OrderResult(
@@ -173,7 +90,6 @@ class PaperExecutor(OrderExecutor):
                 reject_reason="No valid price",
             )
 
-        # Apply slippage (slightly less than simulation to model better fills)
         if order.side == OrderSide.BUY:
             exec_price = price * (1 + self._slippage)
         else:
@@ -192,7 +108,7 @@ class PaperExecutor(OrderExecutor):
         result = OrderResult(
             order=order,
             status=OrderStatus.FILLED,
-            exchange_order_id=f"PAPER-{uuid.uuid4().hex[:8]}",
+            exchange_order_id=f"{order_id_prefix}-{uuid.uuid4().hex[:8]}",
             filled_quantity=order.quantity,
             avg_fill_price=exec_price,
             total_commission=commission,
@@ -201,6 +117,60 @@ class PaperExecutor(OrderExecutor):
         )
         self._order_history.append(result)
         return result
+
+    def sync_positions(self) -> Dict[str, PositionInfo]:
+        return dict(self._positions)
+
+    def sync_balance(self) -> float:
+        return self._balance
+
+
+class SimulationExecutor(SimulatedExecutorBase):
+    """Executes orders with instant simulated fills.
+
+    Replicates the current behavior of _rebalance_position() with slippage
+    and commission modeling.
+    """
+
+    def submit_order(self, order: Order) -> OrderResult:
+        return self._simulate_fill(order, "SIM")
+
+    def cancel_order(self, symbol: str, order_id: str) -> bool:
+        return True  # Simulation: orders fill instantly, nothing to cancel
+
+    def get_order_status(self, symbol: str, order_id: str) -> OrderStatus:
+        return OrderStatus.FILLED  # Simulation: always filled
+
+    def get_execution_mode(self) -> str:
+        return "simulation"
+
+
+class PaperExecutor(SimulatedExecutorBase):
+    """Executes orders using real market data but simulated fills.
+
+    Adds realistic latency simulation and depth-based fill modeling.
+    """
+
+    def __init__(
+        self,
+        commission_rate: float = 0.0005,
+        slippage: float = 0.0003,
+        fill_latency_ms: float = 50.0,
+        market_data_provider=None,
+    ) -> None:
+        super().__init__(
+            commission_rate=commission_rate,
+            slippage=slippage,
+            initial_balance=0.0,
+        )
+        self._fill_latency_ms = fill_latency_ms
+        self._market_data = market_data_provider
+        self._pending_orders: Dict[str, Order] = {}
+
+    def submit_order(self, order: Order) -> OrderResult:
+        if self._fill_latency_ms > 0:
+            time.sleep(self._fill_latency_ms / 1000.0)
+        return self._simulate_fill(order, "PAPER")
 
     def cancel_order(self, symbol: str, order_id: str) -> bool:
         if order_id in self._pending_orders:
@@ -212,12 +182,6 @@ class PaperExecutor(OrderExecutor):
         if order_id in self._pending_orders:
             return OrderStatus.SUBMITTED
         return OrderStatus.FILLED
-
-    def sync_positions(self) -> Dict[str, PositionInfo]:
-        return dict(self._positions)
-
-    def sync_balance(self) -> float:
-        return self._balance
 
     def get_execution_mode(self) -> str:
         return "paper"

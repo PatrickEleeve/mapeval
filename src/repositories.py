@@ -29,11 +29,26 @@ except ImportError:
     SQLALCHEMY_AVAILABLE = False
 
 
-class SessionRepository:
-    """CRUD operations for trading sessions."""
+class BaseRepository:
+    """Common base for all repository classes."""
 
     def __init__(self, db_session: Session) -> None:
         self._session = db_session
+
+    @staticmethod
+    def _parse_timestamp(value) -> datetime:
+        """Convert a timestamp value to a datetime, handling strings, datetimes, and pandas."""
+        if isinstance(value, str):
+            return datetime.fromisoformat(value)
+        if isinstance(value, datetime):
+            return value
+        if hasattr(value, "to_pydatetime"):
+            return value.to_pydatetime()
+        return datetime.now(timezone.utc)
+
+
+class SessionRepository(BaseRepository):
+    """CRUD operations for trading sessions."""
 
     def create(
         self,
@@ -84,16 +99,13 @@ class SessionRepository:
         )
 
 
-class TradeRepository:
+class TradeRepository(BaseRepository):
     """CRUD operations for trade records."""
-
-    def __init__(self, db_session: Session) -> None:
-        self._session = db_session
 
     def save(self, session_id: str, trade: Dict[str, Any]) -> int:
         record = TradeRecord(
             session_id=session_id,
-            timestamp=datetime.fromisoformat(trade["timestamp"]) if isinstance(trade["timestamp"], str) else trade["timestamp"],
+            timestamp=self._parse_timestamp(trade["timestamp"]),
             symbol=trade["symbol"],
             action=trade["action"],
             quantity=trade["quantity"],
@@ -132,16 +144,13 @@ class TradeRepository:
         )
 
 
-class DecisionRepository:
+class DecisionRepository(BaseRepository):
     """CRUD operations for decision records."""
-
-    def __init__(self, db_session: Session) -> None:
-        self._session = db_session
 
     def save(self, session_id: str, decision: Dict[str, Any]) -> int:
         record = DecisionRecord(
             session_id=session_id,
-            timestamp=datetime.fromisoformat(decision["timestamp"]) if isinstance(decision["timestamp"], str) else decision["timestamp"],
+            timestamp=self._parse_timestamp(decision["timestamp"]),
             source=decision.get("source", "unknown"),
             action=decision.get("action", "REBALANCE"),
             requested_exposures=json.dumps(decision.get("requested_exposure", {})),
@@ -165,18 +174,11 @@ class DecisionRepository:
         )
 
 
-class EquityRepository:
+class EquityRepository(BaseRepository):
     """CRUD operations for equity snapshots."""
 
-    def __init__(self, db_session: Session) -> None:
-        self._session = db_session
-
     def save(self, session_id: str, snapshot: Dict[str, Any]) -> int:
-        ts = snapshot["timestamp"]
-        if isinstance(ts, str):
-            ts = datetime.fromisoformat(ts)
-        elif not isinstance(ts, datetime):
-            ts = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else datetime.now(timezone.utc)
+        ts = self._parse_timestamp(snapshot["timestamp"])
 
         record = EquitySnapshot(
             session_id=session_id,
@@ -199,11 +201,8 @@ class EquityRepository:
         )
 
 
-class OrderRepository:
+class OrderRepository(BaseRepository):
     """CRUD operations for order records."""
-
-    def __init__(self, db_session: Session) -> None:
-        self._session = db_session
 
     def save(self, session_id: str, order_data: Dict[str, Any]) -> int:
         record = OrderRecord(
@@ -227,11 +226,8 @@ class OrderRepository:
         return record.id
 
 
-class RiskEventRepository:
+class RiskEventRepository(BaseRepository):
     """CRUD operations for risk events."""
-
-    def __init__(self, db_session: Session) -> None:
-        self._session = db_session
 
     def save(self, session_id: str, event_type: str, severity: str = "warning", details: Optional[Dict[str, Any]] = None) -> int:
         record = RiskEvent(
