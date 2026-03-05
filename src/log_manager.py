@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 from dataclasses import dataclass, field
@@ -42,7 +41,7 @@ class SessionLogger:
 
         llm_provider = run_args.get("llm_provider") if isinstance(run_args, dict) else None
 
-        summary_copy: Dict[str, Any] = copy.deepcopy(summary)
+        summary_copy: Dict[str, Any] = {**summary}
         decision_log = summary_copy.get("decision_log", [])
         llm_reasoning = [
             entry.get("reasoning")

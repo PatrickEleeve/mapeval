@@ -129,10 +129,16 @@ class Backtester:
             # Get current bar prices
             bar_data = data[data["timestamp"] == ts] if "timestamp" in data.columns else data.loc[ts:ts]
             current_prices: Dict[str, float] = {}
-            for _, row in bar_data.iterrows():
-                sym = row.get("symbol", "")
-                if sym in self._symbols:
-                    current_prices[sym] = float(row.get("close", 0))
+            if "symbol" in bar_data.columns and "close" in bar_data.columns:
+                allowed_symbols = set(self._symbols)
+                mask = bar_data["symbol"].isin(allowed_symbols)
+                for sym, close in zip(bar_data.loc[mask, "symbol"], bar_data.loc[mask, "close"]):
+                    current_prices[str(sym)] = float(close)
+            else:
+                for _, row in bar_data.iterrows():
+                    sym = row.get("symbol", "")
+                    if sym in self._symbols:
+                        current_prices[sym] = float(row.get("close", 0))
 
             if not current_prices:
                 continue

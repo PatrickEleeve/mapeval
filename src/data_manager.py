@@ -312,11 +312,11 @@ class BacktestMarketData(BaseMarketData):
         return prices
 
     def append_prices(self, prices: Dict[str, float], timestamp: pd.Timestamp | None = None) -> None:
-        # In backtest, we just advance the window from the pre-loaded history
+        # In backtest, advance the window as a O(1) slice of the pre-loaded history
         if self.current_idx < len(self.full_history):
-            next_row = self.full_history.iloc[self.current_idx : self.current_idx + 1]
-            self.price_history = pd.concat([self.price_history, next_row])
-            self.price_history = self.price_history.tail(self.lookback)
+            end_idx = self.current_idx + 1
+            start_idx = max(0, end_idx - self.lookback)
+            self.price_history = self.full_history.iloc[start_idx:end_idx]
             self.current_idx += 1
 
     def refresh_funding_rates(self, throttle_seconds: int = 60) -> Dict[str, float]:

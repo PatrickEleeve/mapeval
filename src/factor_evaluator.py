@@ -221,15 +221,21 @@ class FactorEvaluator:
         sub_factors = []
 
         # 1. 方向准确率 - 基于交易盈亏
-        winning_trades = [t for t in trade_log if t.get("realized_pnl", 0) > 0]
-        total_trades = len([t for t in trade_log if t.get("action") in ["close", "reduce", "reverse_close"]])
+        close_actions = {"close", "reduce", "reverse_close"}
+        winning_count = 0
+        total_trades = 0
+        for t in trade_log:
+            if t.get("action") in close_actions:
+                total_trades += 1
+                if t.get("realized_pnl", 0) > 0:
+                    winning_count += 1
 
-        direction_accuracy = (len(winning_trades) / total_trades * 100) if total_trades > 0 else 50
+        direction_accuracy = (winning_count / total_trades * 100) if total_trades > 0 else 50
         sub_factors.append(FactorScore(
             name="direction_accuracy",
             score=direction_accuracy,
             weight=0.5,
-            details={"winning": len(winning_trades), "total": total_trades}
+            details={"winning": winning_count, "total": total_trades}
         ))
 
         # 2. 信号质量 - 基于决策置信度与结果的相关性
