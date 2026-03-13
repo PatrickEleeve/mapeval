@@ -10,10 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pandas as pd
 import pytest
 
-from performance_analyzer import PerformanceAnalyzer
-from log_manager import SessionLogger
-from factor_evaluator import FactorEvaluator
-from data_manager import BacktestMarketData
+from mapeval.data_manager import BacktestMarketData
+from mapeval.factor_evaluator import FactorEvaluator
+from mapeval.log_manager import SessionLogger
+from mapeval.performance_analyzer import PerformanceAnalyzer
 
 
 # ---------------------------------------------------------------------------

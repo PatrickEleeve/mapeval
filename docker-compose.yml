@@ -1,39 +1,80 @@
-version: '3.8'
+version: "3.8"
+
+x-mapeval-common: &mapeval-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - .env
+  environment:
+    - LOG_LEVEL=INFO
+    - LOG_JSON=false
+  volumes:
+    - ./logs:/app/logs
+    - ./.cache:/app/.cache
+  restart: unless-stopped
 
 services:
   mapeval:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mapeval-trading
-    env_file:
-      - .env
-    environment:
-      - PYTHONPATH=/app/src
-      - LOG_LEVEL=INFO
-      - LOG_JSON=false
-    volumes:
-      - ./logs:/app/logs
-      - ./.cache:/app/.cache
-    restart: unless-stopped
-    command: ["--duration", "1h", "--symbols", "BTCUSDT", "ETHUSDT", "--llm-provider", "openai"]
+    <<: *mapeval-common
+    container_name: mapeval-sim
+    command:
+      [
+        "--non-interactive",
+        "--execution-mode",
+        "simulation",
+        "--duration",
+        "1h",
+        "--symbols",
+        "BTCUSDT",
+        "ETHUSDT",
+        "--llm-provider",
+        "openai",
+      ]
 
-  mapeval-deepseek:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mapeval-deepseek
-    env_file:
-      - .env
-    environment:
-      - PYTHONPATH=/app/src
-    volumes:
-      - ./logs:/app/logs
-      - ./.cache:/app/.cache
-    restart: unless-stopped
-    command: ["--duration", "1h", "--symbols", "BTCUSDT", "ETHUSDT", "--llm-provider", "deepseek"]
+  mapeval-paper:
+    <<: *mapeval-common
+    container_name: mapeval-paper
+    command:
+      [
+        "--non-interactive",
+        "--execution-mode",
+        "paper",
+        "--enable-api",
+        "--duration",
+        "1h",
+        "--symbols",
+        "BTCUSDT",
+        "ETHUSDT",
+        "--llm-provider",
+        "openai",
+      ]
     profiles:
-      - deepseek
+      - paper
+
+  mapeval-live-testnet:
+    <<: *mapeval-common
+    container_name: mapeval-live-testnet
+    command:
+      [
+        "--non-interactive",
+        "--execution-mode",
+        "live",
+        "--allow-live-trading",
+        "--binance-testnet",
+        "--live-confirmation",
+        "ENABLE BINANCE TESTNET LIVE",
+        "--enable-api",
+        "--duration",
+        "1h",
+        "--symbols",
+        "BTCUSDT",
+        "ETHUSDT",
+        "--llm-provider",
+        "openai",
+      ]
+    profiles:
+      - live
 
   mapeval-test:
     build:
@@ -41,9 +82,8 @@ services:
       dockerfile: Dockerfile
     container_name: mapeval-test
     environment:
-      - PYTHONPATH=/app/src
+      - LOG_LEVEL=INFO
     entrypoint: ["pytest"]
-    command: ["tests/", "-v", "--tb=short"]
+    command: ["tests/", "-q"]
     profiles:
       - test
-

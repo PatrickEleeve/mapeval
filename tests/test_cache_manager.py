@@ -17,7 +17,7 @@ try:
 except ImportError:
     PYARROW_AVAILABLE = False
 
-from cache_manager import KlineCache, SessionCache
+from mapeval.cache_manager import KlineCache, SessionCache
 
 
 class TestKlineCache:

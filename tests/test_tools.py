@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pandas as pd
 import pytest
 
-from tools import FinancialTools
+from mapeval.tools import FinancialTools
 
 
 def make_price_df(prices: list[float], symbol: str = "BTCUSDT") -> pd.DataFrame:
