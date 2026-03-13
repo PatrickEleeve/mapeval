@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from llm_agent import LLMAgent
+from mapeval.llm_agent import LLMAgent
 
 
 class TestSanitizeExposures:

@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, "src")
 
 import pytest
-from position_sizer import PositionSizer, ScalingStrategy
+from mapeval.position_sizer import PositionSizer, ScalingStrategy
 
 
 class TestPositionSizer:

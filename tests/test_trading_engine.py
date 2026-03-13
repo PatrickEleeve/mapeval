@@ -10,7 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pandas as pd
 import pytest
 
-from trading_engine import AccountState, FuturesPosition, RealTimeTradingEngine
+from mapeval.order_executor import GuardedOrderExecutor, PaperExecutor
+from mapeval.order_models import Order, OrderSide, OrderType
+from mapeval.security import ReadOnlyGuard
+from mapeval.trading_engine import AccountState, FuturesPosition, RealTimeTradingEngine
 
 
 class MockMarketData:
@@ -41,6 +44,64 @@ class MockAgent:
 
     def generate_trading_signal(self, current_time, market_data_slice, tools):
         return {}
+
+
+class RecordingExecutor:
+    def __init__(self) -> None:
+        self.orders = []
+
+    def submit_order(self, order):
+        self.orders.append(order)
+        from mapeval.order_models import OrderResult, OrderStatus
+        return OrderResult(
+            order=order,
+            status=OrderStatus.FILLED,
+            exchange_order_id="paper-1",
+            filled_quantity=order.quantity,
+            avg_fill_price=order.price or 0.0,
+        )
+
+    def cancel_order(self, symbol: str, order_id: str) -> bool:
+        return True
+
+    def get_order_status(self, symbol: str, order_id: str):
+        from mapeval.order_models import OrderStatus
+        return OrderStatus.FILLED
+
+    def sync_positions(self):
+        return {}
+
+    def sync_balance(self) -> float:
+        return 0.0
+
+    def get_execution_mode(self) -> str:
+        return "paper"
+
+
+class ReconciliationExecutor(RecordingExecutor):
+    def __init__(self, remote_balance: float) -> None:
+        super().__init__()
+        self.remote_balance = remote_balance
+
+    def sync_balance(self) -> float:
+        return self.remote_balance
+
+
+class EmptyRemoteExecutor(RecordingExecutor):
+    def sync_balance(self) -> float:
+        return 0.0
+
+
+class StubAuditLogger:
+    def __init__(self) -> None:
+        self.entries = []
+
+    def log_control_action(self, action: str, details=None, execution_mode: str = "live") -> None:
+        self.entries.append({
+            "action": action,
+            "details": details or {},
+            "execution_mode": execution_mode,
+        })
 
 
 class TestAccountState:
@@ -215,3 +276,129 @@ class TestLiquidationDetection:
         result = engine._check_liquidation({"BTCUSDT": 50000.0}, pd.Timestamp.utcnow())
         assert result is True
 
+
+class TestExecutionSafety:
+    def test_paper_executor_uses_initial_balance(self):
+        executor = PaperExecutor(initial_balance=12_345.0)
+        assert executor.sync_balance() == pytest.approx(12_345.0)
+
+    def test_guarded_executor_blocks_mutations_in_read_only_mode(self):
+        guard = ReadOnlyGuard(enabled=True)
+        executor = GuardedOrderExecutor(PaperExecutor(initial_balance=10_000.0), guard)
+        order = Order(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=0.01,
+            price=50_000.0,
+        )
+
+        with pytest.raises(PermissionError):
+            executor.submit_order(order)
+
+    def test_engine_uses_executor_for_paper_mode(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
+        agent = MockAgent()
+        executor = RecordingExecutor()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=agent,
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            execution_mode="paper",
+            order_executor=executor,
+        )
+
+        engine._rebalance_position("BTCUSDT", 0.1, 50_000.0, pd.Timestamp.utcnow())
+
+        assert len(executor.orders) == 1
+        assert executor.orders[0].symbol == "BTCUSDT"
+
+    def test_kill_switch_enables_read_only(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
+        agent = MockAgent()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=agent,
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+        )
+        engine.read_only_guard = ReadOnlyGuard(enabled=False)
+
+        result = engine.activate_kill_switch(reason="test")
+
+        assert result["kill_switch_active"] is True
+        assert engine.read_only_guard.is_read_only is True
+
+    def test_reconcile_reports_balance_discrepancy(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
+        agent = MockAgent()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=agent,
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            execution_mode="paper",
+            order_executor=ReconciliationExecutor(remote_balance=90_000.0),
+        )
+
+        report = engine.reconcile()
+
+        assert report["status"] == "completed"
+        assert len(report["discrepancies"]) == 1
+        assert report["discrepancies"][0]["type"] == "balance"
+
+    def test_control_actions_are_audited(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
+        agent = MockAgent()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=agent,
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            execution_mode="paper",
+        )
+        engine.read_only_guard = ReadOnlyGuard(enabled=False)
+        engine.audit_logger = StubAuditLogger()
+
+        engine.set_read_only(True)
+        engine.activate_kill_switch(reason="test")
+        engine.release_kill_switch()
+
+        actions = [entry["action"] for entry in engine.audit_logger.entries]
+        assert "read_only_enabled" in actions
+        assert "kill_switch_activated" in actions
+        assert "kill_switch_released" in actions
+
+    def test_sync_preserves_local_state_on_empty_remote_snapshot(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
+        agent = MockAgent()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=agent,
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            execution_mode="paper",
+            order_executor=EmptyRemoteExecutor(),
+        )
+        engine.account.positions["BTCUSDT"] = FuturesPosition(
+            symbol="BTCUSDT",
+            quantity=0.1,
+            entry_price=50_000.0,
+            leverage=1.0,
+            opened_at=pd.Timestamp.utcnow(),
+        )
+
+        engine._sync_account_from_executor(pd.Timestamp.utcnow(), {"BTCUSDT": 50_000.0})
+
+        assert "BTCUSDT" in engine.account.positions

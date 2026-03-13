@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from risk_manager import RiskLimits, RiskManager, RiskState
+from mapeval.risk_manager import RiskLimits, RiskManager, RiskState
 
 
 class TestRiskLimits:

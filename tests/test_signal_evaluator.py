@@ -5,7 +5,7 @@ sys.path.insert(0, "src")
 
 import pytest
 import pandas as pd
-from signal_evaluator import SignalEvaluator
+from mapeval.signal_evaluator import SignalEvaluator
 
 
 class TestSignalEvaluator:

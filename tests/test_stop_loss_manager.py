@@ -5,7 +5,7 @@ sys.path.insert(0, "src")
 
 import pytest
 import pandas as pd
-from stop_loss_manager import StopLossManager, StopType
+from mapeval.stop_loss_manager import StopLossManager, StopType
 
 
 class TestStopLossManager:

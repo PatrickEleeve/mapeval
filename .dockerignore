@@ -47,10 +47,15 @@ htmlcov/
 # Logs (mount as volume instead)
 logs/*.json
 logs/*.jsonl
-src/logs/
 
 # Cache (mount as volume instead)
 .cache/
+
+# Generated reports and benchmark artifacts
+reports/benchmark_report.json
+reports/benchmark_report.md
+benchmark/results/*.json
+benchmark/data/market_data_*.json
 
 # Secrets
 .env
@@ -64,4 +69,3 @@ src/logs/
 # Misc
 .DS_Store
 Thumbs.db
-
