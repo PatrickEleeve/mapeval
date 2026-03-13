@@ -10,14 +10,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pandas as pd
 import pytest
 
-from exposure_utils import compute_fallback_exposures, sanitize_exposures
-from order_executor import (
+from mapeval.data_manager import BacktestMarketData
+from mapeval.exposure_utils import compute_fallback_exposures, sanitize_exposures
+from mapeval.order_executor import (
     PaperExecutor,
     SimulatedExecutorBase,
     SimulationExecutor,
     create_executor,
 )
-from order_models import Order, OrderSide, OrderStatus, OrderType
+from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +214,6 @@ class TestSimulatedExecutorBase:
 
 class TestBaseMarketData:
     def _make_backtest_data(self):
-        from data_manager import BacktestMarketData
         dates = pd.date_range("2024-01-01", periods=20, freq="h")
         df = pd.DataFrame(
             {"BTCUSDT_Close": range(50000, 50020), "ETHUSDT_Close": range(3000, 3020)},
@@ -229,7 +229,6 @@ class TestBaseMarketData:
         assert "ETHUSDT" in prices
 
     def test_latest_prices_empty(self):
-        from data_manager import BacktestMarketData
         df = pd.DataFrame()
         data = BacktestMarketData(df, symbols=["BTCUSDT"], lookback=10)
         assert data.latest_prices() == {}

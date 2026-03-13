@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from exposure_utils import compute_fallback_exposures, sanitize_exposures
+from mapeval.exposure_utils import compute_fallback_exposures, sanitize_exposures
 
 try:
     from openai import AsyncOpenAI
@@ -240,4 +240,3 @@ async def run_parallel_signals(
         for agent in agents
     ]
     return await asyncio.gather(*tasks, return_exceptions=False)
-

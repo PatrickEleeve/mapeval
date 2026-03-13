@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from exposure_utils import compute_fallback_exposures, sanitize_exposures
+from mapeval.exposure_utils import compute_fallback_exposures, sanitize_exposures
 
 try:
     from openai import OpenAI

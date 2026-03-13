@@ -16,22 +16,7 @@ def sanitize_exposures(
     last_exposures: Dict[str, float],
     sanitization_notes: List[str],
 ) -> Optional[Dict[str, float]]:
-    """Clip and scale exposures to respect per-symbol, delta, and total leverage limits.
-
-    Parameters
-    ----------
-    exposures: Raw exposure values keyed by symbol.
-    symbols: Ordered list of tradable symbols.
-    per_symbol_max_exposure: Maximum absolute exposure per symbol.
-    max_exposure_delta: Maximum step-to-step change per symbol.
-    max_leverage: Maximum total absolute leverage.
-    last_exposures: Previous step exposures for delta limiting.
-    sanitization_notes: Mutable list to append notes about adjustments.
-
-    Returns
-    -------
-    Sanitized exposure dict, or ``None`` if a value cannot be parsed.
-    """
+    """Clip and scale exposures to respect per-symbol, delta, and total leverage limits."""
     sanitized: Dict[str, float] = {}
     per_symbol_cap = max(0.0, per_symbol_max_exposure)
     delta_cap = max(0.0, max_exposure_delta)
@@ -49,18 +34,14 @@ def sanitize_exposures(
         if per_symbol_cap > 0.0:
             bounded = max(-per_symbol_cap, min(per_symbol_cap, clipped))
             if abs(bounded - clipped) > 1e-9:
-                sanitization_notes.append(
-                    f"{symbol}: clipped {clipped:.4f} -> {bounded:.4f}"
-                )
+                sanitization_notes.append(f"{symbol}: clipped {clipped:.4f} -> {bounded:.4f}")
             clipped = bounded
 
         if delta_cap > 0.0:
             prior = prev.get(symbol, 0.0)
             bounded = max(prior - delta_cap, min(prior + delta_cap, clipped))
             if abs(bounded - clipped) > 1e-9:
-                sanitization_notes.append(
-                    f"{symbol}: delta limited {clipped:.4f} -> {bounded:.4f}"
-                )
+                sanitization_notes.append(f"{symbol}: delta limited {clipped:.4f} -> {bounded:.4f}")
             clipped = bounded
 
         sanitized[symbol] = clipped
@@ -71,10 +52,10 @@ def sanitize_exposures(
         total_abs = sum(abs(v) for v in sanitized.values())
         if total_abs > max_leverage + 1e-9 and total_abs > 0.0:
             scale = max_leverage / total_abs
-            sanitized = {s: v * scale for s, v in sanitized.items()}
+            sanitized = {symbol: value * scale for symbol, value in sanitized.items()}
             sanitization_notes.append(f"Scaled by {scale:.4f}")
 
-    return {s: round(v, 6) for s, v in sanitized.items()}
+    return {symbol: round(value, 6) for symbol, value in sanitized.items()}
 
 
 def compute_fallback_exposures(
@@ -83,10 +64,7 @@ def compute_fallback_exposures(
     available_tools: Any,
     max_leverage: float,
 ) -> Dict[str, float]:
-    """Momentum-based heuristic exposures used when the LLM call fails.
-
-    Returns raw (unsanitized) exposures keyed by symbol.
-    """
+    """Momentum-based heuristic exposures used when the LLM call fails."""
     raw_exposures: Dict[str, float] = {}
     for symbol in symbols:
         short_ma = available_tools.calculate_moving_average(symbol, current_time, 21)
