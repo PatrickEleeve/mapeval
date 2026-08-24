@@ -7,12 +7,14 @@ import threading
 import time
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
+import pytest
 
 import mapeval.data_manager as data_manager
-from mapeval.data_manager import BacktestMarketData, RealTimeMarketData
+from mapeval.data_manager import BacktestMarketData, RealTimeMarketData, interval_to_seconds
 
 
 def _build_realtime_market_data(symbols: list[str], history: pd.DataFrame) -> RealTimeMarketData:
@@ -100,6 +102,21 @@ class TestRealTimeMarketData:
 
 
 class TestBacktestMarketData:
+    def test_exposes_replay_interval_and_current_timestamp(self):
+        index = pd.date_range("2024-01-01", periods=2, freq="min", name="Date")
+        history = pd.DataFrame({"BTCUSDT_Close": [100.0, 101.0]}, index=index)
+        market = BacktestMarketData(history, ["BTCUSDT"], interval="1m", lookback=1)
+
+        market.fetch_latest_prices()
+
+        assert market.bar_interval_seconds == 60.0
+        assert market.current_timestamp == index[1]
+
+    def test_rejects_unknown_replay_interval(self):
+        assert interval_to_seconds("4h") == 14_400.0
+        with pytest.raises(ValueError, match="Unsupported history interval"):
+            interval_to_seconds("invalid")
+
     def test_append_prices_maintains_lookback_window(self):
         index = pd.date_range("2024-01-01", periods=6, freq="min", name="Date")
         history = pd.DataFrame(

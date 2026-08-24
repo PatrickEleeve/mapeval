@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import signal
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,17 +10,32 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from mapeval.tools import FinancialTools
-from mapeval.portfolio_risk_controller import PortfolioRiskController, PortfolioRiskLimits
-from mapeval.risk_manager import RiskLimits, RiskManager
 from mapeval.order_executor import OrderExecutor
-from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType, PositionInfo
+from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType
+from mapeval.portfolio_risk_controller import PortfolioRiskController, PortfolioRiskLimits
+from mapeval.risk_manager import RiskManager
+from mapeval.tools import FinancialTools
+
 
 logger = logging.getLogger(__name__)
 
+
+def _as_utc_datetime(timestamp: pd.Timestamp) -> datetime:
+    normalized = pd.Timestamp(timestamp)
+    if normalized.tzinfo is None:
+        normalized = normalized.tz_localize("UTC")
+    else:
+        normalized = normalized.tz_convert("UTC")
+    converted = normalized.to_pydatetime()
+    if not isinstance(converted, datetime):
+        raise TypeError("Expected a scalar timestamp")
+    return converted
+
 # Optional event imports - gracefully degrade if not available
 try:
-    from mapeval.events import Event, EventType, order_filled as _order_filled_event, risk_alert as _risk_alert_event
+    from mapeval.events import Event, EventType
+    from mapeval.events import order_filled as _order_filled_event
+    from mapeval.events import risk_alert as _risk_alert_event
     EVENTS_AVAILABLE = True
 except ImportError:
     EVENTS_AVAILABLE = False
@@ -156,10 +170,10 @@ class RealTimeTradingEngine:
         self.order_executor = order_executor
 
         # Event bus and notifier (set externally by main.py after construction)
-        self.event_bus = None
-        self.notifier = None
-        self.audit_logger = None
-        self.read_only_guard = None
+        self.event_bus: Any = None
+        self.notifier: Any = None
+        self.audit_logger: Any = None
+        self.read_only_guard: Any = None
 
     def _publish_event(self, event) -> None:
         """Publish an event to the event bus if available."""
@@ -251,7 +265,8 @@ class RealTimeTradingEngine:
         for symbol, remote_position in remote_positions.items():
             if abs(remote_position.quantity) < 1e-8:
                 continue
-            opened_at = self.account.positions.get(symbol).opened_at if symbol in self.account.positions else timestamp
+            local_position = self.account.positions.get(symbol)
+            opened_at = local_position.opened_at if local_position is not None else timestamp
             leverage = remote_position.leverage
             if leverage <= 0 and remote_position.mark_price:
                 leverage = self._compute_position_leverage(remote_position.mark_price, remote_position.quantity)
@@ -267,7 +282,12 @@ class RealTimeTradingEngine:
         if prices:
             self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
 
-    def shutdown(self) -> None:
+    def shutdown(
+        self,
+        *,
+        prices: Optional[Dict[str, float]] = None,
+        timestamp: Optional[pd.Timestamp] = None,
+    ) -> None:
         """Request graceful shutdown: close all positions and stop the main loop."""
         logger.info("Shutdown requested, closing all positions...")
         self._shutdown_requested = True
@@ -277,21 +297,31 @@ class RealTimeTradingEngine:
                 details={"open_positions": len(self.account.positions)},
                 execution_mode=self.execution_mode,
             )
-        self._close_all_positions()
+        self._close_all_positions(prices=prices, timestamp=timestamp)
 
-    def _close_all_positions(self) -> None:
+    def _close_all_positions(
+        self,
+        *,
+        prices: Optional[Dict[str, float]] = None,
+        timestamp: Optional[pd.Timestamp] = None,
+    ) -> None:
         """Close all open positions at current prices."""
         restore_read_only = bool(self.read_only_guard is not None and self.read_only_guard.is_read_only)
-        if restore_read_only:
+        if restore_read_only and self.read_only_guard is not None:
             self.read_only_guard.disable()
 
-        try:
-            prices = self.market_data.fetch_latest_prices()
-        except Exception:
-            prices = self.market_data.latest_prices()
+        if prices is None:
+            try:
+                prices = self.market_data.fetch_latest_prices()
+            except Exception:
+                prices = self.market_data.latest_prices()
 
         if prices:
-            timestamp = pd.Timestamp.utcnow().floor("s")
+            timestamp = (
+                pd.Timestamp(timestamp)
+                if timestamp is not None
+                else pd.Timestamp.utcnow().floor("s")
+            )
             for symbol in list(self.account.positions.keys()):
                 price = prices.get(symbol)
                 if price is not None:
@@ -360,17 +390,53 @@ class RealTimeTradingEngine:
             "read_only": bool(self.read_only_guard and self.read_only_guard.is_read_only),
         }
 
-    def run(self, duration_seconds: float, reporter: Optional[Any] = None) -> Dict[str, Any]:
+    def _record_equity_snapshot(self, timestamp: pd.Timestamp) -> None:
+        snapshot = {
+            "timestamp": timestamp,
+            "equity": self.account.equity,
+            "balance": self.account.balance,
+            "unrealized_pnl": self.account.unrealized_pnl,
+        }
+        if self.equity_history and self.equity_history[-1]["timestamp"] == timestamp:
+            self.equity_history[-1] = snapshot
+        else:
+            self.equity_history.append(snapshot)
+
+    def run(
+        self,
+        duration_seconds: float,
+        reporter: Optional[Any] = None,
+        *,
+        replay_interval_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Run against wall-clock data or replay historical bars without sleeping."""
+        is_replay = replay_interval_seconds is not None
+        if replay_interval_seconds is not None and replay_interval_seconds <= 0:
+            raise ValueError("replay_interval_seconds must be positive")
+        if is_replay and self.execution_mode != "simulation":
+            raise ValueError("Historical replay only supports simulation execution")
+
+        replay_interval = float(replay_interval_seconds or 0.0)
+        replay_elapsed_seconds = 0.0
+        replay_anchor_timestamp: Optional[pd.Timestamp] = None
+        last_prices: Optional[Dict[str, float]] = None
+        last_loop_ts: Optional[pd.Timestamp] = None
         end_time = time.time() + duration_seconds
         next_decision_ts = time.time()
+        next_replay_decision_seconds = 0.0
         next_reconcile_ts = time.time()
-        while time.time() < end_time and not self._shutdown_requested:
+        while not self._shutdown_requested:
+            if is_replay:
+                if replay_elapsed_seconds >= duration_seconds:
+                    break
+            elif time.time() >= end_time:
+                break
+
             loop_ts = pd.Timestamp.utcnow().floor("s")
-            current_time = datetime.now(timezone.utc)
             try:
                 prices = self.market_data.fetch_latest_prices()
             except StopIteration:
-                if reporter is not None:
+                if reporter is not None and not is_replay:
                     reporter.record_warning(loop_ts, "Backtest finished (StopIteration).")
                 break
             except RuntimeError as exc:
@@ -378,8 +444,25 @@ class RealTimeTradingEngine:
                     reporter.record_warning(loop_ts, str(exc))
                 prices = self.market_data.latest_prices()
                 if not prices:
-                    time.sleep(self.poll_interval_seconds)
+                    if is_replay:
+                        self.market_data.append_prices({}, timestamp=loop_ts)
+                        replay_elapsed_seconds += replay_interval
+                    else:
+                        time.sleep(self.poll_interval_seconds)
                     continue
+
+            if is_replay:
+                if replay_anchor_timestamp is None:
+                    replay_timestamp = getattr(self.market_data, "current_timestamp", None)
+                    if replay_timestamp is None:
+                        replay_timestamp = loop_ts
+                    replay_anchor_timestamp = pd.Timestamp(replay_timestamp)
+                loop_ts = replay_anchor_timestamp + pd.Timedelta(
+                    seconds=replay_elapsed_seconds
+                )
+            current_time = _as_utc_datetime(loop_ts)
+            last_prices = dict(prices)
+            last_loop_ts = loop_ts
 
             self.market_data.append_prices(prices, timestamp=loop_ts)
             self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
@@ -444,7 +527,10 @@ class RealTimeTradingEngine:
                             loop_ts,
                             f"RISK: Force-close triggered (drawdown: {risk_report['drawdown']:.2%})",
                         )
-                    self.shutdown()
+                    self.shutdown(prices=prices, timestamp=loop_ts)
+                    self._record_equity_snapshot(loop_ts)
+                    if reporter is not None:
+                        reporter.record_tick(loop_ts, self.account, prices)
                     break
                 # Warn about positions held too long
                 age_warnings = self.risk_manager.get_position_age_warnings(current_time)
@@ -455,21 +541,22 @@ class RealTimeTradingEngine:
             if self._check_liquidation(prices, loop_ts):
                 if reporter is not None:
                     reporter.record_warning(loop_ts, "Account liquidated due to insufficient margin.")
+                self._record_equity_snapshot(loop_ts)
+                if reporter is not None:
+                    reporter.record_tick(loop_ts, self.account, prices)
                 break
 
-            self.equity_history.append(
-                {
-                    "timestamp": loop_ts,
-                    "equity": self.account.equity,
-                    "balance": self.account.balance,
-                    "unrealized_pnl": self.account.unrealized_pnl,
-                }
-            )
+            self._record_equity_snapshot(loop_ts)
 
             if reporter is not None:
                 reporter.record_tick(loop_ts, self.account, prices)
 
-            if time.time() >= next_decision_ts:
+            decision_due = (
+                replay_elapsed_seconds >= next_replay_decision_seconds
+                if is_replay
+                else time.time() >= next_decision_ts
+            )
+            if decision_due:
                 history_slice = self.market_data.get_recent_window()
                 funding = {}
                 try:
@@ -494,32 +581,62 @@ class RealTimeTradingEngine:
                     ],
                     "agent_adjustments": agent_notes,
                 }
-                response = self.execute_trading_plan(plan, source="llm_agent")
+                response = self.execute_trading_plan(
+                    plan,
+                    source="llm_agent",
+                    market_prices=prices,
+                    timestamp=loop_ts,
+                )
                 if response.get("status") != "filled" and reporter is not None:
                     reason = response.get("reason")
-                    message = reason.get("message") if isinstance(reason, dict) else "Unknown rejection."
+                    message = (
+                        str(reason.get("message", "Unknown rejection."))
+                        if isinstance(reason, dict)
+                        else "Unknown rejection."
+                    )
                     reporter.record_warning(loop_ts, f"Trading plan rejected: {message}")
                 else:
                     adjustments = response.get("adjustments", {})
-                    agent_notes = adjustments.get("agent") if isinstance(adjustments, dict) else None
-                    engine_notes = adjustments.get("engine") if isinstance(adjustments, dict) else None
-                    if reporter is not None and agent_notes:
-                        for note in agent_notes:
+                    response_agent_notes = (
+                        adjustments.get("agent") if isinstance(adjustments, dict) else None
+                    )
+                    response_engine_notes = (
+                        adjustments.get("engine") if isinstance(adjustments, dict) else None
+                    )
+                    if reporter is not None and response_agent_notes:
+                        for note in response_agent_notes:
                             if "HOLD" in note:
                                 print(f"[{loop_ts}] 📌 {note}")
                             else:
                                 reporter.record_warning(loop_ts, f"Agent clamp: {note}")
-                    if reporter is not None and engine_notes:
-                        for note in engine_notes:
+                    if reporter is not None and response_engine_notes:
+                        for note in response_engine_notes:
                             reporter.record_warning(loop_ts, f"Constraint applied: {note}")
-                next_decision_ts = time.time() + self.decision_interval_seconds
+                if is_replay:
+                    next_replay_decision_seconds = (
+                        replay_elapsed_seconds + self.decision_interval_seconds
+                    )
+                else:
+                    next_decision_ts = time.time() + self.decision_interval_seconds
 
             if self.account.equity <= 0.0:
                 if reporter is not None:
                     reporter.record_warning(loop_ts, "Equity depleted; stopping trading loop.")
                 break
 
-            time.sleep(self.poll_interval_seconds)
+            if is_replay:
+                replay_elapsed_seconds += replay_interval
+            else:
+                time.sleep(self.poll_interval_seconds)
+
+        if (
+            self.account.positions
+            and not self._shutdown_requested
+            and last_prices is not None
+            and last_loop_ts is not None
+        ):
+            self._close_all_positions(prices=last_prices, timestamp=last_loop_ts)
+            self._record_equity_snapshot(last_loop_ts)
 
         summary = {
             "equity_history": self.equity_history,
@@ -755,6 +872,7 @@ class RealTimeTradingEngine:
                 return
             exec_price, comm, slip = calculate_execution(target_quantity, price)
             self.account.balance -= comm
+            self.account.realized_pnl -= comm
             leverage = self._compute_position_leverage(exec_price, target_quantity)
             self.account.positions[symbol] = FuturesPosition(
                 symbol=symbol,
@@ -776,7 +894,7 @@ class RealTimeTradingEngine:
                 }
             )
             if self.risk_manager is not None:
-                self.risk_manager.record_position_open(symbol, datetime.now(timezone.utc))
+                self.risk_manager.record_position_open(symbol, _as_utc_datetime(timestamp))
             if EVENTS_AVAILABLE:
                 self._publish_event(_order_filled_event(
                     symbol=symbol, side="BUY" if target_quantity > 0 else "SELL",
@@ -804,7 +922,10 @@ class RealTimeTradingEngine:
                 }
             )
             if self.risk_manager is not None:
-                self.risk_manager.record_trade_result(realized - comm, datetime.now(timezone.utc))
+                self.risk_manager.record_trade_result(
+                    realized - comm,
+                    _as_utc_datetime(timestamp),
+                )
                 self.risk_manager.record_position_close(symbol)
             if EVENTS_AVAILABLE:
                 self._publish_event(_order_filled_event(
@@ -819,6 +940,7 @@ class RealTimeTradingEngine:
                 delta_qty = target_quantity - existing_qty
                 exec_price, comm, slip = calculate_execution(delta_qty, price)
                 self.account.balance -= comm
+                self.account.realized_pnl -= comm
                 weighted_notional = position.entry_price * existing_qty + exec_price * delta_qty
                 position.quantity = target_quantity
                 position.entry_price = weighted_notional / target_quantity
@@ -876,9 +998,10 @@ class RealTimeTradingEngine:
                 "realized_pnl": realized - comm_close,
             }
         )
-        
+
         exec_open, comm_open, slip_open = calculate_execution(target_quantity, price)
         self.account.balance -= comm_open
+        self.account.realized_pnl -= comm_open
         leverage = self._compute_position_leverage(exec_open, target_quantity)
         self.account.positions[symbol] = FuturesPosition(
             symbol=symbol,
@@ -906,10 +1029,10 @@ class RealTimeTradingEngine:
             self.account.unrealized_pnl,
             self.account.equity,
         )
-        
+
         is_liquidated = False
         trigger_reason = ""
-        
+
         if self.account.equity <= 0:
             is_liquidated = True
             trigger_reason = f"Equity depleted: {self.account.equity:.2f} <= 0"
@@ -919,7 +1042,7 @@ class RealTimeTradingEngine:
                 f"Margin call: equity {self.account.equity:.2f} < "
                 f"maintenance_margin {self.account.maintenance_margin_req:.2f}"
             )
-        
+
         if is_liquidated:
             self._liquidation_audit = self.portfolio_risk.create_liquidation_audit_log(
                 timestamp=timestamp.isoformat(),
@@ -930,22 +1053,22 @@ class RealTimeTradingEngine:
                 positions=self.account.positions,
                 prices=prices,
             )
-            
+
             for symbol, position in list(self.account.positions.items()):
                 qty = -position.quantity
                 if qty > 0:
                     price = prices.get(symbol, position.entry_price) * (1 + self.slippage)
                 else:
                     price = prices.get(symbol, position.entry_price) * (1 - self.slippage)
-                
+
                 commission = abs(qty * price) * self.commission_rate
                 slippage_cost = abs(qty * prices.get(symbol, position.entry_price) * self.slippage)
                 self.portfolio_risk.accumulate_costs(commission, slippage_cost)
-                
+
                 realized = (price - position.entry_price) * position.quantity
                 self.account.balance += realized - commission
                 self.account.realized_pnl += realized - commission
-                
+
                 self.trade_log.append({
                     "timestamp": timestamp.isoformat(),
                     "symbol": symbol,
@@ -972,42 +1095,60 @@ class RealTimeTradingEngine:
         leverage = notional / equity
         return max(1.0, min(self.max_leverage, leverage))
 
-    def execute_trading_plan(self, plan: Dict[str, Any], *, source: str = "external_command") -> Dict[str, Any]:
-        timestamp = pd.Timestamp.utcnow().floor("s")
+    def execute_trading_plan(
+        self,
+        plan: Dict[str, Any],
+        *,
+        source: str = "external_command",
+        market_prices: Optional[Dict[str, float]] = None,
+        timestamp: Optional[pd.Timestamp] = None,
+    ) -> Dict[str, Any]:
+        timestamp = (
+            pd.Timestamp(timestamp)
+            if timestamp is not None
+            else pd.Timestamp.utcnow().floor("s")
+        )
         raw_agent_notes = plan.get("agent_adjustments") if isinstance(plan, dict) else []
-        agent_notes = [str(note) for note in raw_agent_notes if note]
+        if isinstance(raw_agent_notes, (list, tuple, set)):
+            agent_notes = [str(note) for note in raw_agent_notes if note]
+        elif raw_agent_notes:
+            agent_notes = [str(raw_agent_notes)]
+        else:
+            agent_notes = []
         plan_action = plan.get("action", "REBALANCE") if isinstance(plan, dict) else "REBALANCE"
-        try:
-            prices = self.market_data.fetch_latest_prices()
-        except RuntimeError as exc:
-            prices = self.market_data.latest_prices()
-            if not prices:
-                reason = {
-                    "code": "MARKET_DATA_UNAVAILABLE",
-                    "message": str(exc),
-                }
-                response = {
-                    "status": "rejected",
-                    "timestamp": timestamp.isoformat(),
-                    "reason": reason,
-                    "positions": [],
-                    "account": self._account_snapshot(),
-                }
-                self._log_decision(
-                    timestamp,
-                    source,
-                    requested_exposure={},
-                    applied_exposure={},
-                    reasoning=plan.get("reasoning", ""),
-                    status="rejected",
-                    reason=reason,
-                    agent_notes=agent_notes,
-                    engine_notes=None,
-                    action=plan_action,
-                )
-                return response
-        self.market_data.append_prices(prices, timestamp=timestamp)
-        self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+        prices = dict(market_prices) if market_prices is not None else None
+        if prices is None:
+            try:
+                prices = self.market_data.fetch_latest_prices()
+            except RuntimeError as exc:
+                prices = self.market_data.latest_prices()
+                if not prices:
+                    reason = {
+                        "code": "MARKET_DATA_UNAVAILABLE",
+                        "message": str(exc),
+                    }
+                    response = {
+                        "status": "rejected",
+                        "timestamp": timestamp.isoformat(),
+                        "reason": reason,
+                        "positions": [],
+                        "account": self._account_snapshot(),
+                    }
+                    self._log_decision(
+                        timestamp,
+                        source,
+                        requested_exposure={},
+                        applied_exposure={},
+                        reasoning=plan.get("reasoning", ""),
+                        status="rejected",
+                        reason=reason,
+                        agent_notes=agent_notes,
+                        engine_notes=None,
+                        action=plan_action,
+                    )
+                    return response
+            self.market_data.append_prices(prices, timestamp=timestamp)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
 
         current_exposures = self._current_exposures(prices)
         requested_exposures = current_exposures.copy()
@@ -1055,7 +1196,7 @@ class RealTimeTradingEngine:
 
         # Risk manager pre-trade check
         if self.risk_manager is not None:
-            current_time_dt = datetime.now(timezone.utc)
+            current_time_dt = _as_utc_datetime(timestamp)
             for action in plan.get("actions", []):
                 sym = str(action.get("symbol", "")).upper()
                 target_exp = float(action.get("target_exposure", 0.0))
@@ -1070,8 +1211,6 @@ class RealTimeTradingEngine:
                 )
                 if not risk_ok:
                     logger.warning("Risk check failed for %s: %s", sym, risk_violations)
-                    if reporter is not None if hasattr(self, '_reporter') else False:
-                        pass
                     # Reduce exposure to 0 for violated symbols
                     exposures[sym] = current_exposures.get(sym, 0.0)
                     engine_notes.append(f"RISK: {sym} blocked - {'; '.join(risk_violations)}")

@@ -5,9 +5,9 @@ RUN = $(PYTHON) -m mapeval
 SIM_ARGS = --non-interactive --execution-mode simulation --duration 1h --symbols BTCUSDT ETHUSDT --llm-provider openai
 PAPER_ARGS = --non-interactive --execution-mode paper --enable-api --duration 1h --symbols BTCUSDT ETHUSDT --llm-provider openai
 LIVE_TESTNET_ARGS = --non-interactive --execution-mode live --allow-live-trading --binance-testnet --live-confirmation "ENABLE BINANCE TESTNET LIVE" --enable-api --duration 1h --symbols BTCUSDT ETHUSDT --llm-provider openai
-SMOKE_BACKTEST_ARGS = --non-interactive --mode backtest --execution-mode simulation --strategy buy_hold --duration 1h --symbols BTCUSDT --data-path sample_financial_data.csv
+SMOKE_BACKTEST_ARGS = --non-interactive --mode backtest --execution-mode simulation --strategy buy_hold --duration 1h --symbols BTCUSDT --data-path sample_financial_data.csv --print-interval 31536000
 
-.PHONY: help dev-install sim paper live-testnet smoke-backtest test clean
+.PHONY: help dev-install sim paper live-testnet smoke-backtest test test-cov clean
 
 help:
 	@echo "make dev-install   # editable install + fix macOS hidden .pth issue"
@@ -16,6 +16,7 @@ help:
 	@echo "make live-testnet  # strict live path on Binance testnet"
 	@echo "make smoke-backtest# offline smoke test with sample data"
 	@echo "make test          # run pytest"
+	@echo "make test-cov      # run pytest with the coverage gate"
 	@echo "make clean         # remove local caches and runtime artifacts"
 
 dev-install:
@@ -37,8 +38,12 @@ smoke-backtest:
 test:
 	$(PYTEST) -q
 
+test-cov:
+	$(PYTEST) -q --cov=src/mapeval --cov-report=term-missing --cov-report=xml
+
 clean:
-	rm -rf .pytest_cache .ruff_cache htmlcov .coverage
+	rm -rf .pytest_cache .ruff_cache .mypy_cache htmlcov .coverage coverage.xml
+	rm -rf build dist src/*.egg-info
 	find . -type d -name '__pycache__' -prune -exec rm -rf {} +
 	find logs -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	rm -f financial_analysis.png python_code.pdf output.txt

@@ -8,9 +8,9 @@ always have a clean pandas DataFrame to work with.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Final, Iterable, List, Optional, Sequence
 
 import pandas as pd
@@ -20,8 +20,8 @@ from mapeval.binance_data_source import (
     FALLBACK_BASES,
     check_api,
     fetch_klines,
-    get_ticker_price,
     get_futures_premium_index,
+    get_ticker_price,
 )
 from mapeval.binance_ws import BinanceSpotWS
 
@@ -38,6 +38,24 @@ _INTERVAL_TO_FREQ: Dict[str, str] = {
     "2h": "2h",
     "4h": "4h",
     "1d": "B",
+}
+_INTERVAL_TO_SECONDS: Dict[str, float] = {
+    "1s": 1.0,
+    "1m": 60.0,
+    "3m": 3 * 60.0,
+    "5m": 5 * 60.0,
+    "15m": 15 * 60.0,
+    "30m": 30 * 60.0,
+    "1h": 60 * 60.0,
+    "2h": 2 * 60 * 60.0,
+    "4h": 4 * 60 * 60.0,
+    "6h": 6 * 60 * 60.0,
+    "8h": 8 * 60 * 60.0,
+    "12h": 12 * 60 * 60.0,
+    "1d": 24 * 60 * 60.0,
+    "3d": 3 * 24 * 60 * 60.0,
+    "1w": 7 * 24 * 60 * 60.0,
+    "1M": 30 * 24 * 60 * 60.0,
 }
 _MAX_HISTORY_FETCH_WORKERS: Final = 8
 
@@ -58,6 +76,17 @@ def _klines_to_df(klines: List[List]) -> pd.DataFrame:
 
 def _interval_to_freq(interval: str) -> str:
     return _INTERVAL_TO_FREQ.get(interval, "T")
+
+
+def interval_to_seconds(interval: str) -> float:
+    """Return the simulated duration of one Binance kline interval."""
+    try:
+        return _INTERVAL_TO_SECONDS[interval]
+    except KeyError as exc:
+        supported = ", ".join(_INTERVAL_TO_SECONDS)
+        raise ValueError(
+            f"Unsupported history interval '{interval}'. Choose one of: {supported}"
+        ) from exc
 
 
 def _fetch_symbol_history(
@@ -382,6 +411,7 @@ class BacktestMarketData(BaseMarketData):
     ) -> None:
         self.symbols = list(symbols)
         self.interval = interval
+        self.bar_interval_seconds = interval_to_seconds(interval)
         self.lookback = lookback
 
         # Ensure history_df is sorted and has Date index
@@ -390,6 +420,7 @@ class BacktestMarketData(BaseMarketData):
             self.full_history.index = self.full_history.index.tz_convert(None)
 
         self.current_idx = 0
+        self.current_timestamp: Optional[pd.Timestamp] = None
         self.price_history = pd.DataFrame()
 
         # Initialize with enough data for lookback if possible
@@ -404,6 +435,7 @@ class BacktestMarketData(BaseMarketData):
         if self.current_idx >= len(self.full_history):
             raise StopIteration("Backtest finished.")
 
+        self.current_timestamp = pd.Timestamp(self.full_history.index[self.current_idx])
         row = self.full_history.iloc[self.current_idx]
         prices = {}
         for symbol in self.symbols:
@@ -456,10 +488,10 @@ def load_historical_data(
     columns = [f"{symbol}_Close" for symbol in symbols]
 
     frames = _parallel_fetch_symbol_frames(symbols, interval, lookback, base_urls)
-    
+
     if not frames:
         return pd.DataFrame()
-        
+
     merged = _merge_history_frames(frames, columns)
 
     if cache_path and not merged.empty:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from typing import Any, Dict
+
 
 try:
     from dotenv import load_dotenv
@@ -28,7 +30,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
 
-AGENT_CONFIG = {
+AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
     "openai": {
         "model_name": "gpt-5",
         "temperature": 0.2,
@@ -48,7 +50,7 @@ AGENT_CONFIG = {
     },
 }
 
-TRADING_CONFIG = {
+TRADING_CONFIG: Dict[str, Any] = {
     "symbols": [
         "BTCUSDT",
         "ETHUSDT",

@@ -5,11 +5,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
 import pytest
 
+from mapeval.data_manager import BacktestMarketData
 from mapeval.order_executor import GuardedOrderExecutor, PaperExecutor
 from mapeval.order_models import Order, OrderSide, OrderType
 from mapeval.security import ReadOnlyGuard
@@ -41,9 +43,17 @@ class MockAgent:
     def __init__(self) -> None:
         self.last_reasoning = ""
         self.last_sanitization_notes = []
+        self.calls = 0
 
     def generate_trading_signal(self, current_time, market_data_slice, tools):
+        self.calls += 1
         return {}
+
+
+class LongAgent(MockAgent):
+    def generate_trading_signal(self, current_time, market_data_slice, tools):
+        self.calls += 1
+        return {"BTCUSDT": 1.0}
 
 
 class RecordingExecutor:
@@ -159,6 +169,74 @@ class TestAccountState:
 
 
 class TestRealTimeTradingEngine:
+    def test_historical_replay_advances_once_per_bar_without_sleep(self, monkeypatch):
+        index = pd.date_range("2024-01-01", periods=5, freq="min", name="Date")
+        history = pd.DataFrame(
+            {"BTCUSDT_Close": [100.0, 101.0, 102.0, 103.0, 104.0]},
+            index=index,
+        )
+        market_data = BacktestMarketData(
+            history,
+            symbols=["BTCUSDT"],
+            interval="1m",
+            lookback=2,
+        )
+        agent = MockAgent()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=agent,
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+        )
+
+        def fail_if_called(_seconds):
+            pytest.fail("historical replay must not sleep")
+
+        monkeypatch.setattr("mapeval.trading_engine.time.sleep", fail_if_called)
+
+        summary = engine.run(duration_seconds=180.0, replay_interval_seconds=60.0)
+
+        assert market_data.current_idx == len(history)
+        assert agent.calls == 3
+        assert len(summary["equity_history"]) == 3
+        assert summary["equity_history"][0]["timestamp"] == index[2]
+
+    def test_run_closes_positions_before_building_final_summary(self):
+        index = pd.date_range("2024-01-01", periods=3, freq="min", name="Date")
+        history = pd.DataFrame(
+            {"BTCUSDT_Close": [100.0, 100.0, 100.0]},
+            index=index,
+        )
+        market_data = BacktestMarketData(
+            history,
+            symbols=["BTCUSDT"],
+            interval="1m",
+            lookback=1,
+        )
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=LongAgent(),
+            initial_capital=1_000.0,
+            max_leverage=1.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=120.0,
+            commission_rate=0.001,
+        )
+
+        summary = engine.run(duration_seconds=120.0, replay_interval_seconds=60.0)
+
+        final_account = summary["final_account"]
+        trade_pnl = sum(entry["realized_pnl"] for entry in summary["trade_log"])
+        assert engine.account.positions == {}
+        assert final_account["unrealized_pnl"] == 0.0
+        assert final_account["realized_pnl"] == pytest.approx(trade_pnl)
+        assert final_account["equity"] == pytest.approx(1_000.0 + trade_pnl)
+        assert summary["equity_history"][-1]["equity"] == pytest.approx(
+            final_account["equity"]
+        )
+
     def test_validate_exposures_rejects_unknown_symbol(self):
         market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50000.0})
         agent = MockAgent()
@@ -243,6 +321,27 @@ class TestRealTimeTradingEngine:
         )
         margin = engine._margin_requirement({"BTCUSDT": 5.0}, equity=100_000.0)
         assert margin == pytest.approx(50_000.0)
+
+    def test_realized_pnl_includes_open_and_close_commissions(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 100.0})
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=MockAgent(),
+            initial_capital=1_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            commission_rate=0.001,
+        )
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+        engine._rebalance_position("BTCUSDT", 0.0, 100.0, timestamp)
+
+        trade_pnl = sum(entry["realized_pnl"] for entry in engine.trade_log)
+        assert engine.account.balance == pytest.approx(999.8)
+        assert engine.account.realized_pnl == pytest.approx(-0.2)
+        assert engine.account.realized_pnl == pytest.approx(trade_pnl)
 
 
 class TestLiquidationDetection:

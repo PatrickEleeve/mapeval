@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
@@ -14,6 +15,7 @@ from mapeval.main import (
     _confirm_live_execution,
     _required_live_confirmation,
     _resolve_live_environment,
+    _validate_mode_combination,
 )
 
 
@@ -46,3 +48,12 @@ class TestLiveConfirmation:
     def test_non_interactive_accepts_exact_phrase(self):
         phrase = _required_live_confirmation("testnet")
         _confirm_live_execution("testnet", phrase, True)
+
+
+class TestModeValidation:
+    def test_backtest_requires_simulation_execution(self):
+        with pytest.raises(ValueError, match="only supports"):
+            _validate_mode_combination("backtest", "live")
+
+    def test_backtest_accepts_simulation_execution(self):
+        _validate_mode_combination("backtest", "simulation")

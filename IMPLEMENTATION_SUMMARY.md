@@ -9,6 +9,8 @@ The recent cleanup focused on turning the repository into a cleaner, safer, pack
 ### Runtime and Safety
 
 - unified runtime entrypoints around `python -m mapeval`
+- changed historical replay to advance by simulated bar time instead of wall-clock sleeps
+- restricted backtests to simulation execution and removed duplicate price advancement
 - added `Makefile` shortcuts for common workflows
 - enforced stricter live-mode safety checks
 - added API token protection, read-only mode, kill switch, and reconciliation controls
@@ -20,6 +22,8 @@ The recent cleanup focused on turning the repository into a cleaner, safer, pack
 - moved ad-hoc smoke scripts to `scripts/manual/`
 - added `.env.example`
 - cleaned generated artifacts and log handling rules
+- split the minimal runtime container from the development test image
+- removed external-network health checks that could mark a healthy process unhealthy
 - reduced duplicate pytest configuration
 
 ### Package Migration
@@ -45,6 +49,7 @@ make paper
 make live-testnet
 make smoke-backtest
 make test
+make test-cov
 ```
 
 ## Current State
@@ -56,11 +61,15 @@ make test
 
 ## Validation
 
-Latest local verification:
+Use these checks before merging:
 
-- `python -m mapeval --help` — passed
-- `.venv/bin/mapeval --help` — passed after repair
-- `make test` — passed (`123 passed`)
+- `python -m mapeval --help`
+- `.venv/bin/mapeval --help`
+- `make test`
+- `make test-cov`
+
+CI verifies Python 3.10-3.12 compatibility and enforces the coverage baseline on
+Python 3.11. Existing Ruff debt remains visible but temporarily non-blocking.
 
 ## Conclusion
 

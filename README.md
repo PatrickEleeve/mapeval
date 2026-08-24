@@ -22,6 +22,8 @@ make sim
 make paper
 make live-testnet
 make smoke-backtest
+make test
+make test-cov
 make clean
 ```
 
@@ -31,6 +33,7 @@ If you prefer Docker:
 docker compose up mapeval
 docker compose --profile paper up mapeval-paper
 docker compose --profile live up mapeval-live-testnet
+docker compose --profile test run --rm mapeval-test
 ```
 
 ## 1. Simulation
@@ -92,6 +95,9 @@ Use this when you want a deterministic local sanity check without Binance connec
 ```bash
 make smoke-backtest
 ```
+
+Historical bars replay without wall-clock delays. Backtest mode is restricted to
+simulation, so it cannot reach paper or live order execution.
 
 ## Mental Model
 

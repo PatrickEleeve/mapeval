@@ -9,24 +9,38 @@ import os
 import signal
 import sys
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
 
-from mapeval.config import AGENT_CONFIG, DEEPSEEK_API_KEY, OPENAI_API_KEY, QWEN_API_KEY, TRADING_CONFIG
+from mapeval import binance_data_source
+from mapeval.binance_futures_client import BinanceFuturesClient
+from mapeval.config import (
+    AGENT_CONFIG,
+    DEEPSEEK_API_KEY,
+    OPENAI_API_KEY,
+    QWEN_API_KEY,
+    TRADING_CONFIG,
+)
 from mapeval.data_manager import BacktestMarketData, RealTimeMarketData, load_historical_data
+from mapeval.event_bus import EventBus
+from mapeval.events import Event, EventType
 from mapeval.llm_agent import BaselineAgent, LLMAgent
 from mapeval.log_manager import SessionLogger
+from mapeval.notifier import create_notifier
+from mapeval.order_executor import create_executor
 from mapeval.rate_limiter import RateLimiter
 from mapeval.reporter import RealTimeReporter
 from mapeval.risk_manager import RiskLimits, RiskManager
-from mapeval.tui_reporter import TUIReporter
+from mapeval.security import (
+    AuditLogger,
+    ReadOnlyGuard,
+    generate_api_token,
+    mask_key,
+    validate_api_keys,
+)
 from mapeval.trading_engine import RealTimeTradingEngine
-from mapeval.event_bus import EventBus
-from mapeval.events import Event, EventType, risk_alert
-from mapeval.notifier import LogNotifier, create_notifier
-from mapeval.security import AuditLogger, ReadOnlyGuard, generate_api_token, mask_key, validate_api_keys
-from mapeval.order_executor import create_executor
-from mapeval import binance_data_source
-from mapeval.binance_futures_client import BinanceFuturesClient
+from mapeval.tui_reporter import TUIReporter
+
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +136,12 @@ def _resolve_live_environment(binance_testnet: bool, binance_mainnet: bool) -> s
     return "testnet"
 
 
+def _validate_mode_combination(mode: str, execution_mode: str) -> None:
+    """Prevent historical data from reaching an external execution path."""
+    if mode == "backtest" and execution_mode != "simulation":
+        raise ValueError("Backtest mode only supports --execution-mode simulation")
+
+
 def _required_live_confirmation(environment: str) -> str:
     """Return the exact confirmation phrase required for live execution."""
     return f"ENABLE BINANCE {environment.upper()} LIVE"
@@ -169,7 +189,7 @@ def _parse_args() -> argparse.Namespace:
         "--duration",
         choices=TRADING_CONFIG["duration_seconds"].keys(),
         default="1h",
-        help="Trading session length.",
+        help="Realtime session length or simulated time span to replay in backtest mode.",
     )
     parser.add_argument(
         "--symbols",
@@ -512,8 +532,9 @@ def _run_trading_session(
     telegram_chat_id: str | None = None,
     webhook_url: str | None = None,
 ) -> None:
+    _validate_mode_combination(mode, execution_mode)
     provider_key = provider.lower()
-    provider_config: Dict[str, float] = AGENT_CONFIG.get(provider_key, {})
+    provider_config: Dict[str, Any] = AGENT_CONFIG.get(provider_key, {})
     duration_seconds = _select_duration(duration_label)
     uppercase_symbols: List[str] = [symbol.upper() for symbol in symbols]
     selected_indicators = _normalize_indicators(indicators)
@@ -530,13 +551,14 @@ def _run_trading_session(
         reconcile_interval=reconcile_interval,
     )
 
+    market_data: BacktestMarketData | RealTimeMarketData
     if mode == "backtest":
         print("Loading historical data for backtest...")
         # Load enough data for lookback + simulation
         # Assuming 1m interval, 2000 rows covers > 1 day
         historical_df = load_historical_data(
-            uppercase_symbols, 
-            history_interval, 
+            uppercase_symbols,
+            history_interval,
             2000,
             cache_path=data_path
         )
@@ -563,6 +585,7 @@ def _run_trading_session(
         except Exception:
             pass
 
+    agent: Any
     if strategy == "llm":
         agent = LLMAgent(
             api_key=_api_key_for_provider(provider_key),
@@ -586,6 +609,7 @@ def _run_trading_session(
             max_leverage=max_leverage,
         )
 
+    reporter: Any
     if use_ui:
         reporter = TUIReporter()
     else:
@@ -711,7 +735,7 @@ def _run_trading_session(
         order_executor = GuardedOrderExecutor(order_executor, read_only_guard)
         print("[SAFE] Read-only guard enabled; order placement is blocked")
 
-    session_logger = SessionLogger(log_dir)
+    session_logger = SessionLogger(Path(log_dir))
     engine = RealTimeTradingEngine(
         market_data=market_data,
         agent=agent,
@@ -820,7 +844,15 @@ def _run_trading_session(
     session_start = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     try:
-        summary = engine.run(duration_seconds=duration_seconds, reporter=reporter)
+        summary = engine.run(
+            duration_seconds=duration_seconds,
+            reporter=reporter,
+            replay_interval_seconds=(
+                market_data.bar_interval_seconds
+                if isinstance(market_data, BacktestMarketData)
+                else None
+            ),
+        )
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received. Closing positions and finalizing...")
         engine.shutdown()
@@ -858,7 +890,10 @@ def _run_trading_session(
     if db_manager is not None:
         try:
             from mapeval.repositories import (
-                SessionRepository, TradeRepository, DecisionRepository, EquityRepository,
+                DecisionRepository,
+                EquityRepository,
+                SessionRepository,
+                TradeRepository,
             )
             with db_manager.session() as db_session:
                 session_repo = SessionRepository(db_session)
@@ -871,12 +906,18 @@ def _run_trading_session(
                 trade_repo.save_batch(session_id, summary.get("trade_log", []))
 
                 decision_repo = DecisionRepository(db_session)
-                for decision in summary.get("decision_log", []):
-                    decision_repo.save(session_id, decision)
+                decision_log = summary.get("decision_log", [])
+                if isinstance(decision_log, list):
+                    for decision in decision_log:
+                        if isinstance(decision, dict):
+                            decision_repo.save(session_id, decision)
 
                 equity_repo = EquityRepository(db_session)
-                for snap in summary.get("equity_history", []):
-                    equity_repo.save(session_id, snap)
+                equity_history = summary.get("equity_history", [])
+                if isinstance(equity_history, list):
+                    for snapshot in equity_history:
+                        if isinstance(snapshot, dict):
+                            equity_repo.save(session_id, snapshot)
 
                 session_repo.complete(
                     session_id=session_id,

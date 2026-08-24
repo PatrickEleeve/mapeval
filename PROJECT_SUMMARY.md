@@ -94,18 +94,23 @@ make dev-install
 
 That command installs the package and repairs hidden editable `.pth` files that can break the `mapeval` console script.
 
-## Verification Snapshot
+## Verification
 
-Latest local validation:
+Local validation commands:
 
-- `python -m mapeval --help` — passed
-- `.venv/bin/mapeval --help` — passed after `make dev-install`
-- `make test` — passed (`123 passed`)
+- `python -m mapeval --help`
+- `.venv/bin/mapeval --help`
+- `make test`
+- `make test-cov`
+
+CI runs the suite on Python 3.10, 3.11, and 3.12. Python 3.11 also enforces the
+current coverage baseline and publishes the report.
 
 ## Remaining Work
 
-The main structural migration is complete. Remaining work is optional refinement:
+The main structural migration is complete. Remaining work is incremental:
 
 - tighten older long-form docs further
-- add packaging/lint automation for release workflows
+- raise coverage from the current baseline, prioritizing execution and exchange boundaries
+- pay down existing Ruff findings, then make lint checks blocking in CI
 - decide whether benchmark utilities should also move under `mapeval/`

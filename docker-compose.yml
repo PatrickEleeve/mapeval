@@ -1,9 +1,8 @@
-version: "3.8"
-
 x-mapeval-common: &mapeval-common
   build:
     context: .
     dockerfile: Dockerfile
+    target: final
   env_file:
     - .env
   environment:
@@ -80,6 +79,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: test
     container_name: mapeval-test
     environment:
       - LOG_LEVEL=INFO

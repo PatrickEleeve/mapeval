@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -13,14 +13,14 @@ repos:
       - id: check-case-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.9
+    rev: v0.16.4
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+    rev: v2.3.1
     hooks:
       - id: mypy
         additional_dependencies:
@@ -33,11 +33,11 @@ repos:
     hooks:
       - id: pytest-check
         name: pytest-check
-        entry: bash -c 'PYTHONPATH=src pytest tests/ -x -q --tb=line 2>/dev/null || true'
+        entry: bash -c 'PYTHONPATH=src python -m pytest tests/ -x -q --tb=line'
         language: system
         types: [python]
         pass_filenames: false
-        stages: [push]
+        stages: [pre-push]
 
 ci:
   autofix_commit_msg: |
@@ -50,4 +50,3 @@ ci:
   autoupdate_schedule: weekly
   skip: [pytest-check]
   submodules: false
-
