@@ -5,21 +5,24 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
 import pytest
 
-from tools import FinancialTools
+from mapeval.tools import FinancialTools
 
 
 def make_price_df(prices: list[float], symbol: str = "BTCUSDT") -> pd.DataFrame:
     dates = pd.date_range(end=pd.Timestamp.now(), periods=max(len(prices), 1), freq="1min")
     dates = dates.tz_localize(None)
-    return pd.DataFrame({
-        "Date": dates,
-        f"{symbol}_Close": prices if prices else [float("nan")],
-    })
+    return pd.DataFrame(
+        {
+            "Date": dates,
+            f"{symbol}_Close": prices if prices else [float("nan")],
+        }
+    )
 
 
 class TestMovingAverage:
@@ -38,10 +41,12 @@ class TestMovingAverage:
         assert ma == pytest.approx(70.0)
 
     def test_moving_average_empty_returns_none(self):
-        df = pd.DataFrame({
-            "Date": pd.DatetimeIndex([], dtype="datetime64[ns]"),
-            "BTCUSDT_Close": pd.Series([], dtype=float),
-        })
+        df = pd.DataFrame(
+            {
+                "Date": pd.DatetimeIndex([], dtype="datetime64[ns]"),
+                "BTCUSDT_Close": pd.Series([], dtype=float),
+            }
+        )
         tools = FinancialTools(df)
         end_date = pd.Timestamp.now()
         ma = tools.calculate_moving_average("BTCUSDT", end_date, window_size=5)
@@ -85,8 +90,25 @@ class TestRSI:
         assert rsi < 30
 
     def test_rsi_bounds(self):
-        df = make_price_df([100.0, 105.0, 102.0, 108.0, 106.0, 110.0, 107.0, 112.0,
-                            109.0, 115.0, 112.0, 118.0, 115.0, 120.0, 117.0])
+        df = make_price_df(
+            [
+                100.0,
+                105.0,
+                102.0,
+                108.0,
+                106.0,
+                110.0,
+                107.0,
+                112.0,
+                109.0,
+                115.0,
+                112.0,
+                118.0,
+                115.0,
+                120.0,
+                117.0,
+            ]
+        )
         tools = FinancialTools(df)
         end_date = df["Date"].iloc[-1]
         rsi = tools.calculate_rsi("BTCUSDT", end_date, window_size=14)

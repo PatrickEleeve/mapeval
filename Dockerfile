@@ -1,39 +1,35 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS runtime
 
 LABEL maintainer="MAPEval Team"
 LABEL description="LLM-driven cryptocurrency futures trading benchmark"
 
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY src/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-RUN pip install --no-cache-dir \
-    structlog \
-    pydantic \
-    pydantic-settings \
-    pyarrow
-
+COPY pyproject.toml README.md ./
 COPY src/ ./src/
-COPY tests/ ./tests/
-COPY pytest.ini ./
 
-ENV PYTHONPATH=/app/src
-ENV PYTHONUNBUFFERED=1
+RUN python -m pip install --no-cache-dir '.[api,db,full]' \
+    && adduser --disabled-password --gecos '' appuser \
+    && mkdir -p /app/logs /app/.cache \
+    && chown -R appuser:appuser /app/logs /app/.cache
 
-RUN adduser --disabled-password --gecos '' appuser
-RUN chown -R appuser:appuser /app
 USER appuser
 
-RUN mkdir -p /app/logs /app/.cache
+ENTRYPOINT ["python", "-m", "mapeval"]
+CMD ["--non-interactive", "--execution-mode", "simulation", "--duration", "1h", "--llm-provider", "openai"]
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('https://api.binance.com/api/v3/ping', timeout=5)" || exit 1
 
-ENTRYPOINT ["python", "src/main.py"]
-CMD ["--duration", "1h", "--llm-provider", "openai"]
+FROM runtime AS test
 
+USER root
+COPY tests/ ./tests/
+COPY pytest.ini ./
+RUN python -m pip install --no-cache-dir '.[dev]'
+USER appuser
+
+
+FROM runtime AS final

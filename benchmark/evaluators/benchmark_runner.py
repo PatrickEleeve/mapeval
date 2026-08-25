@@ -13,7 +13,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 
 try:
     from openai import OpenAI
@@ -24,6 +25,7 @@ except ImportError:
 @dataclass
 class EvaluationResult:
     """单个测试用例的评估结果"""
+
     case_id: str
     category: str
     passed: bool
@@ -31,21 +33,22 @@ class EvaluationResult:
     llm_response: str
     parsed_answer: Any
     ground_truth: Any
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class BenchmarkScore:
     """完整的Benchmark评分"""
+
     model: str
     provider: str
     timestamp: str
     total_score: float
-    factor_scores: Dict[str, float]
-    detailed_results: List[EvaluationResult]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    factor_scores: dict[str, float]
+    detailed_results: list[EvaluationResult]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "model": self.model,
             "provider": self.provider,
@@ -61,7 +64,7 @@ class BenchmarkScore:
             "metadata": self.metadata,
         }
 
-    def _group_by_category(self) -> Dict:
+    def _group_by_category(self) -> dict:
         groups = {}
         for result in self.detailed_results:
             if result.category not in groups:
@@ -97,7 +100,6 @@ class LLMEvaluator:
 DIRECTION: [LONG/SHORT/HOLD]
 REASON: [你的理由]
 CONFIDENCE: [0.0-1.0]""",
-
         "risk_awareness": """你是一个风险管理专家。
 根据给定的市场状况，判断应该采取什么行动。
 
@@ -107,7 +109,6 @@ CONFIDENCE: [0.0-1.0]""",
 ACTION: [你建议的行动]
 REASON: [为什么]
 RISK_LEVEL: [LOW/MEDIUM/HIGH/EXTREME]""",
-
         "consistency": """你是一个交易决策系统。
 根据市场数据给出交易方向建议。
 
@@ -123,7 +124,7 @@ CONFIDENCE: [0.0-1.0]""",
         api_key: str,
         provider: str = "openai",
         model: str = "gpt-4-turbo",
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
     ):
         self.provider = provider
         self.model = model
@@ -153,31 +154,28 @@ CONFIDENCE: [0.0-1.0]""",
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            return f"ERROR: {str(e)}"
+            return f"ERROR: {e!s}"
 
-    def evaluate_signal_recognition(self, case: Dict) -> EvaluationResult:
+    def evaluate_signal_recognition(self, case: dict) -> EvaluationResult:
         """评估信号识别能力"""
 
         context = case["market_context"]
         user_prompt = f"""
-当前{case['symbol']}市场状态:
-- 价格: {context['price']}
-- RSI(14): {context['rsi_14']}
-- MACD: {context['macd']}, Signal: {context['macd_signal']}, Histogram: {context['macd_histogram']}
-- ATR%: {context['atr_pct']}%
-- 布林带位置: {context['bb_position']} (0=下轨, 1=上轨)
-- 趋势: {context['trend']}
-- 波动率排名: {context['volatility_rank']}
+当前{case["symbol"]}市场状态:
+- 价格: {context["price"]}
+- RSI(14): {context["rsi_14"]}
+- MACD: {context["macd"]}, Signal: {context["macd_signal"]}, Histogram: {context["macd_histogram"]}
+- ATR%: {context["atr_pct"]}%
+- 布林带位置: {context["bb_position"]} (0=下轨, 1=上轨)
+- 趋势: {context["trend"]}
+- 波动率排名: {context["volatility_rank"]}
 
-检测到的信号: {', '.join(case.get('detected_signals', ['无明显信号']))}
+检测到的信号: {", ".join(case.get("detected_signals", ["无明显信号"]))}
 
-请预测未来{case['ground_truth']['lookahead_bars']}根K线的方向。
+请预测未来{case["ground_truth"]["lookahead_bars"]}根K线的方向。
 """
 
-        response = self._call_llm(
-            self.SYSTEM_PROMPTS["signal_recognition"],
-            user_prompt
-        )
+        response = self._call_llm(self.SYSTEM_PROMPTS["signal_recognition"], user_prompt)
 
         # 解析回答
         parsed = self._parse_direction_response(response)
@@ -202,33 +200,30 @@ CONFIDENCE: [0.0-1.0]""",
             details={
                 "difficulty": case.get("difficulty"),
                 "actual_return": case["ground_truth"]["actual_return_pct"],
-            }
+            },
         )
 
-    def evaluate_risk_awareness(self, case: Dict) -> EvaluationResult:
+    def evaluate_risk_awareness(self, case: dict) -> EvaluationResult:
         """评估风险意识"""
 
         context = case["market_context"]
         user_prompt = f"""
 市场状况:
-- 资产: {case['symbol']}
-- 当前价格: {context['price']}
-- RSI: {context['rsi_14']}
-- 回撤: {context['drawdown_pct']}%
-- 波动率: {context['atr_pct']}%
-- 波动率排名: {context['volatility_rank']}
-- 趋势: {context['trend']}
-- MACD Histogram: {context['macd_histogram']}
+- 资产: {case["symbol"]}
+- 当前价格: {context["price"]}
+- RSI: {context["rsi_14"]}
+- 回撤: {context["drawdown_pct"]}%
+- 波动率: {context["atr_pct"]}%
+- 波动率排名: {context["volatility_rank"]}
+- 趋势: {context["trend"]}
+- MACD Histogram: {context["macd_histogram"]}
 
-风险场景: {case['scenario']}
+风险场景: {case["scenario"]}
 
-{case['question']}
+{case["question"]}
 """
 
-        response = self._call_llm(
-            self.SYSTEM_PROMPTS["risk_awareness"],
-            user_prompt
-        )
+        response = self._call_llm(self.SYSTEM_PROMPTS["risk_awareness"], user_prompt)
 
         # 解析回答
         parsed = self._parse_action_response(response)
@@ -262,13 +257,13 @@ CONFIDENCE: [0.0-1.0]""",
             llm_response=response,
             parsed_answer=parsed,
             ground_truth=case["ground_truth"],
-            details={"scenario": case["scenario"]}
+            details={"scenario": case["scenario"]},
         )
 
     def evaluate_consistency(
         self,
-        cases: List[Dict],
-    ) -> List[EvaluationResult]:
+        cases: list[dict],
+    ) -> list[EvaluationResult]:
         """评估一致性 - 需要批量处理同组用例"""
 
         # 按scenario_group分组
@@ -287,24 +282,23 @@ CONFIDENCE: [0.0-1.0]""",
             for case in group_cases:
                 context = case["market_context"]
                 user_prompt = f"""
-{case.get('symbol', 'BTC')}市场数据:
-- RSI: {context['rsi_14']}
-- MACD Histogram: {context['macd_histogram']}
-- ATR%: {context['atr_pct']}%
-- 趋势: {context['trend']}
+{case.get("symbol", "BTC")}市场数据:
+- RSI: {context["rsi_14"]}
+- MACD Histogram: {context["macd_histogram"]}
+- ATR%: {context["atr_pct"]}%
+- 趋势: {context["trend"]}
 
-{case['question']}
+{case["question"]}
 """
-                response = self._call_llm(
-                    self.SYSTEM_PROMPTS["consistency"],
-                    user_prompt
-                )
+                response = self._call_llm(self.SYSTEM_PROMPTS["consistency"], user_prompt)
                 parsed = self._parse_direction_response(response)
-                responses.append({
-                    "case": case,
-                    "response": response,
-                    "parsed": parsed,
-                })
+                responses.append(
+                    {
+                        "case": case,
+                        "response": response,
+                        "parsed": parsed,
+                    }
+                )
 
             # 计算一致性
             directions = [r["parsed"].get("direction") for r in responses]
@@ -313,6 +307,7 @@ CONFIDENCE: [0.0-1.0]""",
 
             # 找最常见的方向
             from collections import Counter
+
             direction_counts = Counter(directions)
             most_common = direction_counts.most_common(1)[0][0]
             consistency_rate = direction_counts[most_common] / len(directions)
@@ -321,24 +316,26 @@ CONFIDENCE: [0.0-1.0]""",
             for r in responses:
                 is_consistent = r["parsed"].get("direction") == most_common
 
-                results.append(EvaluationResult(
-                    case_id=r["case"]["id"],
-                    category="consistency",
-                    passed=is_consistent,
-                    score=consistency_rate,  # 用整组一致性作为分数
-                    llm_response=r["response"],
-                    parsed_answer=r["parsed"],
-                    ground_truth={"expected": "consistent_with_group"},
-                    details={
-                        "group": group_id,
-                        "consistency_rate": consistency_rate,
-                        "group_majority": most_common,
-                    }
-                ))
+                results.append(
+                    EvaluationResult(
+                        case_id=r["case"]["id"],
+                        category="consistency",
+                        passed=is_consistent,
+                        score=consistency_rate,  # 用整组一致性作为分数
+                        llm_response=r["response"],
+                        parsed_answer=r["parsed"],
+                        ground_truth={"expected": "consistent_with_group"},
+                        details={
+                            "group": group_id,
+                            "consistency_rate": consistency_rate,
+                            "group_majority": most_common,
+                        },
+                    )
+                )
 
         return results
 
-    def _parse_direction_response(self, response: str) -> Dict:
+    def _parse_direction_response(self, response: str) -> dict:
         """解析方向预测回答"""
         result = {"direction": None, "confidence": 0.5, "reason": ""}
 
@@ -372,7 +369,7 @@ CONFIDENCE: [0.0-1.0]""",
 
         return result
 
-    def _parse_action_response(self, response: str) -> Dict:
+    def _parse_action_response(self, response: str) -> dict:
         """解析行动建议回答"""
         result = {"action": None, "risk_level": None, "reason": ""}
 
@@ -400,20 +397,20 @@ class BenchmarkRunner:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def load_test_suite(self, category: str) -> List[Dict]:
+    def load_test_suite(self, category: str) -> list[dict]:
         """加载测试集"""
         filepath = self.test_suite_dir / f"{category}.json"
         if not filepath.exists():
             return []
 
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
             return data.get("cases", [])
 
     def run_benchmark(
         self,
         evaluator: LLMEvaluator,
-        categories: Optional[List[str]] = None,
+        categories: list[str] | None = None,
         max_cases_per_category: int = 50,
     ) -> BenchmarkScore:
         """运行完整benchmark"""
@@ -440,7 +437,7 @@ class BenchmarkRunner:
                     result = evaluator.evaluate_signal_recognition(case)
                     results.append(result)
                     if (i + 1) % 10 == 0:
-                        print(f"    Progress: {i+1}/{len(cases)}")
+                        print(f"    Progress: {i + 1}/{len(cases)}")
                     time.sleep(0.5)  # Rate limit
             elif category == "risk_awareness":
                 results = []
@@ -448,7 +445,7 @@ class BenchmarkRunner:
                     result = evaluator.evaluate_risk_awareness(case)
                     results.append(result)
                     if (i + 1) % 10 == 0:
-                        print(f"    Progress: {i+1}/{len(cases)}")
+                        print(f"    Progress: {i + 1}/{len(cases)}")
                     time.sleep(0.5)
 
             all_results.extend(results)
@@ -472,10 +469,10 @@ class BenchmarkRunner:
             metadata={
                 "total_cases": len(all_results),
                 "categories": categories,
-            }
+            },
         )
 
-    def _calculate_factor_scores(self, results: List[EvaluationResult]) -> Dict[str, float]:
+    def _calculate_factor_scores(self, results: list[EvaluationResult]) -> dict[str, float]:
         """计算各因子分数"""
         scores = {}
 
@@ -518,7 +515,7 @@ def run_full_benchmark(
     api_key: str,
     provider: str = "openai",
     model: str = "gpt-4-turbo",
-    base_url: Optional[str] = None,
+    base_url: str | None = None,
 ) -> BenchmarkScore:
     """便捷函数 - 运行完整benchmark"""
 
@@ -552,9 +549,9 @@ if __name__ == "__main__":
 
     score = run_full_benchmark(api_key, provider, model)
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("BENCHMARK RESULTS")
-    print("="*50)
+    print("=" * 50)
     print(f"Model: {score.model}")
     print(f"Total Score: {score.total_score:.1f}/100")
     print("\nFactor Scores:")

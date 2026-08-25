@@ -5,11 +5,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from llm_agent import LLMAgent
+from mapeval.llm_agent import LLMAgent
 
 
 class TestSanitizeExposures:
@@ -140,4 +141,3 @@ class TestSystemPromptGeneration:
         )
         assert "25" in agent._system_prompt
         assert "5" in agent._system_prompt
-

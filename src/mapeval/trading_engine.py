@@ -1,0 +1,1638 @@
+"""Real-time trading engine with leveraged futures support."""
+
+from __future__ import annotations
+
+import logging
+import math
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+import pandas as pd
+
+from mapeval.order_executor import OrderExecutor
+from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType
+from mapeval.portfolio_risk_controller import PortfolioRiskController, PortfolioRiskLimits
+from mapeval.risk_manager import RiskManager
+from mapeval.tools import FinancialTools
+
+
+logger = logging.getLogger(__name__)
+
+
+def _as_utc_datetime(timestamp: pd.Timestamp) -> datetime:
+    normalized = pd.Timestamp(timestamp)
+    if normalized.tzinfo is None:
+        normalized = normalized.tz_localize("UTC")
+    else:
+        normalized = normalized.tz_convert("UTC")
+    converted = normalized.to_pydatetime()
+    if not isinstance(converted, datetime):
+        raise TypeError("Expected a scalar timestamp")
+    return converted
+
+
+# Optional event imports - gracefully degrade if not available
+try:
+    from mapeval.events import Event, EventType
+    from mapeval.events import order_filled as _order_filled_event
+    from mapeval.events import risk_alert as _risk_alert_event
+
+    EVENTS_AVAILABLE = True
+except ImportError:
+    EVENTS_AVAILABLE = False
+
+
+@dataclass
+class FuturesPosition:
+    """Track an open futures position."""
+
+    symbol: str
+    quantity: float
+    entry_price: float
+    leverage: float
+    opened_at: pd.Timestamp
+
+
+@dataclass
+class AccountState:
+    """Maintain account balances, margin, and PnL."""
+
+    balance: float
+    positions: dict[str, FuturesPosition] = field(default_factory=dict)
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    equity: float = 0.0
+    margin_used: float = 0.0
+    available_margin: float = 0.0
+    maintenance_margin_req: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.equity = self.balance
+        self.available_margin = self.balance
+
+    def mark_to_market(
+        self, prices: dict[str, float], max_leverage: float, maintenance_rate: float = 0.0
+    ) -> None:
+        unrealized = 0.0
+        total_notional = 0.0
+        for symbol, position in self.positions.items():
+            price = prices.get(symbol)
+            if price is None:
+                continue
+            unrealized += (price - position.entry_price) * position.quantity
+            total_notional += abs(price * position.quantity)
+        self.unrealized_pnl = unrealized
+        self.equity = self.balance + unrealized
+        if max_leverage > 0.0:
+            self.margin_used = total_notional / max_leverage
+        else:
+            self.margin_used = 0.0
+        self.maintenance_margin_req = total_notional * maintenance_rate
+        self.available_margin = self.equity - self.margin_used
+
+
+class RealTimeTradingEngine:
+    """Continuously poll prices, request signals, and manage leveraged positions."""
+
+    def __init__(
+        self,
+        market_data,
+        agent: Any,
+        initial_capital: float,
+        max_leverage: float,
+        poll_interval_seconds: float,
+        decision_interval_seconds: float,
+        min_long_exposure: float = 0.0,
+        per_symbol_max_exposure: float | None = None,
+        max_exposure_delta: float | None = None,
+        commission_rate: float = 0.0,
+        slippage: float = 0.0,
+        liquidation_threshold: float = 0.0,
+        gross_leverage_cap: float | None = None,
+        net_exposure_cap: float | None = None,
+        max_open_positions: int | None = None,
+        max_turnover_per_step: float | None = None,
+        risk_manager: RiskManager | None = None,
+        execution_mode: str = "simulation",
+        order_executor: OrderExecutor | None = None,
+        reconcile_interval_seconds: float | None = None,
+        reconcile_auto_read_only: bool = True,
+    ) -> None:
+        self.market_data = market_data
+        self.agent = agent
+        self.initial_capital = initial_capital
+        self.account = AccountState(balance=initial_capital)
+        self.max_leverage = max(0.0, float(max_leverage))
+        self.poll_interval_seconds = poll_interval_seconds
+        self.decision_interval_seconds = decision_interval_seconds
+        self.min_long_exposure = max(0.0, float(min_long_exposure))
+        self.commission_rate = max(0.0, float(commission_rate))
+        self.slippage = max(0.0, float(slippage))
+        self.liquidation_threshold = max(0.0, float(liquidation_threshold))
+        self.execution_mode = execution_mode
+        self.reconcile_interval_seconds = reconcile_interval_seconds
+        self.reconcile_auto_read_only = reconcile_auto_read_only
+        per_symbol_cap = (
+            per_symbol_max_exposure if per_symbol_max_exposure is not None else self.max_leverage
+        )
+        if self.max_leverage > 0.0 and per_symbol_cap is not None:
+            per_symbol_cap = min(float(per_symbol_cap), self.max_leverage)
+        self.per_symbol_max_exposure = max(
+            0.0, float(per_symbol_cap if per_symbol_cap is not None else self.max_leverage)
+        )
+        delta_cap = (
+            max_exposure_delta if max_exposure_delta is not None else self.per_symbol_max_exposure
+        )
+        if delta_cap is None:
+            delta_cap = self.per_symbol_max_exposure
+        self.max_exposure_delta = max(
+            0.0, min(float(delta_cap), self.per_symbol_max_exposure or float(delta_cap))
+        )
+        self.trade_log: list[dict[str, Any]] = []
+        self.decision_log: list[dict[str, Any]] = []
+        self.equity_history: list[dict[str, Any]] = []
+        self._last_applied_exposures: dict[str, float] = dict.fromkeys(
+            getattr(self.market_data, "symbols", []), 0.0
+        )
+        self._last_validation_notes: list[str] = []
+        self._shutdown_requested = False
+        self._kill_switch_active = False
+        self._last_reconciliation: dict[str, Any] | None = None
+
+        # Risk manager integration
+        self.risk_manager = risk_manager
+        if self.risk_manager is not None:
+            self.risk_manager.initialize(initial_capital)
+
+        portfolio_limits = PortfolioRiskLimits(
+            gross_leverage_cap=gross_leverage_cap
+            if gross_leverage_cap is not None
+            else self.max_leverage,
+            net_exposure_cap=net_exposure_cap
+            if net_exposure_cap is not None
+            else self.max_leverage,
+            max_open_positions=max_open_positions
+            if max_open_positions is not None
+            else len(getattr(self.market_data, "symbols", [])),
+            max_turnover_per_step=max_turnover_per_step
+            if max_turnover_per_step is not None
+            else self.max_leverage * 2,
+        )
+        self.portfolio_risk = PortfolioRiskController(
+            limits=portfolio_limits,
+            initial_margin_rate=1.0 / self.max_leverage if self.max_leverage > 0 else 1.0,
+            maintenance_margin_rate=self.liquidation_threshold,
+        )
+        self._liquidation_audit: dict[str, Any] | None = None
+
+        # Order executor for paper/live trading
+        self.order_executor = order_executor
+
+        # Event bus and notifier (set externally by main.py after construction)
+        self.event_bus: Any = None
+        self.notifier: Any = None
+        self.audit_logger: Any = None
+        self.read_only_guard: Any = None
+
+    def _publish_event(self, event) -> None:
+        """Publish an event to the event bus if available."""
+        if self.event_bus is not None:
+            try:
+                self.event_bus.publish(event)
+            except Exception as exc:
+                logger.debug("Event publish failed: %s", exc)
+
+    def reconcile(self) -> dict[str, Any]:
+        """Reconcile local state with the exchange.
+
+        Fetches real positions and balance from the executor (if available)
+        and compares with local AccountState. Returns a dict with discrepancies.
+        """
+        if self.order_executor is None:
+            return {"status": "skipped", "reason": "no executor configured"}
+
+        discrepancies: list[dict[str, Any]] = []
+        try:
+            remote_positions = self.order_executor.sync_positions()
+            remote_balance = self.order_executor.sync_balance()
+
+            # Check balance discrepancy
+            balance_diff = abs(self.account.balance - remote_balance)
+            if balance_diff > 1.0:  # More than $1 difference
+                discrepancies.append(
+                    {
+                        "type": "balance",
+                        "local": self.account.balance,
+                        "remote": remote_balance,
+                        "diff": balance_diff,
+                    }
+                )
+                logger.warning(
+                    "Balance discrepancy: local=%.2f, remote=%.2f",
+                    self.account.balance,
+                    remote_balance,
+                )
+
+            # Check position discrepancies
+            all_symbols = set(list(self.account.positions.keys()) + list(remote_positions.keys()))
+            for symbol in all_symbols:
+                local_pos = self.account.positions.get(symbol)
+                remote_pos = remote_positions.get(symbol)
+
+                local_qty = local_pos.quantity if local_pos else 0.0
+                remote_qty = remote_pos.quantity if remote_pos else 0.0
+                qty_diff = abs(local_qty - remote_qty)
+
+                if qty_diff > 1e-6:
+                    discrepancies.append(
+                        {
+                            "type": "position",
+                            "symbol": symbol,
+                            "local_qty": local_qty,
+                            "remote_qty": remote_qty,
+                            "diff": qty_diff,
+                        }
+                    )
+                    logger.warning(
+                        "Position discrepancy for %s: local=%.6f, remote=%.6f",
+                        symbol,
+                        local_qty,
+                        remote_qty,
+                    )
+
+            return {
+                "status": "completed",
+                "discrepancies": discrepancies,
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        except Exception as exc:
+            logger.error("Reconciliation failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+
+    def _sync_account_from_executor(
+        self,
+        timestamp: pd.Timestamp,
+        prices: dict[str, float] | None = None,
+    ) -> None:
+        """Refresh local account state from the execution venue."""
+        if self.order_executor is None or self.execution_mode not in ("paper", "live"):
+            return
+
+        remote_positions = self.order_executor.sync_positions()
+        remote_balance = self.order_executor.sync_balance()
+        if (
+            remote_balance <= 0
+            and not remote_positions
+            and (self.account.balance > 0 or self.account.positions)
+        ):
+            logger.warning(
+                "Executor sync returned empty account state; preserving local account snapshot"
+            )
+            return
+        if remote_balance >= 0:
+            self.account.balance = remote_balance
+
+        synced_positions: dict[str, FuturesPosition] = {}
+        for symbol, remote_position in remote_positions.items():
+            if abs(remote_position.quantity) < 1e-8:
+                continue
+            local_position = self.account.positions.get(symbol)
+            opened_at = local_position.opened_at if local_position is not None else timestamp
+            leverage = remote_position.leverage
+            if leverage <= 0 and remote_position.mark_price:
+                leverage = self._compute_position_leverage(
+                    remote_position.mark_price, remote_position.quantity
+                )
+            synced_positions[symbol] = FuturesPosition(
+                symbol=symbol,
+                quantity=remote_position.quantity,
+                entry_price=remote_position.entry_price,
+                leverage=leverage,
+                opened_at=opened_at,
+            )
+
+        self.account.positions = synced_positions
+        if prices:
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+
+    def shutdown(
+        self,
+        *,
+        prices: dict[str, float] | None = None,
+        timestamp: pd.Timestamp | None = None,
+    ) -> None:
+        """Request graceful shutdown: close all positions and stop the main loop."""
+        logger.info("Shutdown requested, closing all positions...")
+        self._shutdown_requested = True
+        if self.audit_logger is not None:
+            self.audit_logger.log_control_action(
+                action="shutdown_requested",
+                details={"open_positions": len(self.account.positions)},
+                execution_mode=self.execution_mode,
+            )
+        self._close_all_positions(prices=prices, timestamp=timestamp)
+
+    def _close_all_positions(
+        self,
+        *,
+        prices: dict[str, float] | None = None,
+        timestamp: pd.Timestamp | None = None,
+    ) -> None:
+        """Close all open positions at current prices."""
+        restore_read_only = bool(
+            self.read_only_guard is not None and self.read_only_guard.is_read_only
+        )
+        if restore_read_only and self.read_only_guard is not None:
+            self.read_only_guard.disable()
+
+        if prices is None:
+            try:
+                prices = self.market_data.fetch_latest_prices()
+            except Exception:
+                prices = self.market_data.latest_prices()
+
+        if prices:
+            timestamp = (
+                pd.Timestamp(timestamp)
+                if timestamp is not None
+                else pd.Timestamp.utcnow().floor("s")
+            )
+            for symbol in list(self.account.positions.keys()):
+                price = prices.get(symbol)
+                if price is not None:
+                    self._rebalance_position(symbol, 0.0, price, timestamp)
+            self._sync_account_from_executor(timestamp, prices)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+        logger.info(
+            "Shutdown complete. Final equity: %.2f, Realized PnL: %.2f",
+            self.account.equity,
+            self.account.realized_pnl,
+        )
+        if restore_read_only and self.read_only_guard is not None:
+            self.read_only_guard.enable()
+
+    def set_read_only(self, enabled: bool) -> bool:
+        """Toggle read-only mode for downstream executors when available."""
+        if self.read_only_guard is None:
+            return False
+        if enabled:
+            self.read_only_guard.enable()
+        else:
+            self.read_only_guard.disable()
+        if self.audit_logger is not None:
+            self.audit_logger.log_control_action(
+                action="read_only_enabled" if enabled else "read_only_disabled",
+                execution_mode=self.execution_mode,
+            )
+        return True
+
+    def activate_kill_switch(
+        self, reason: str = "manual", close_positions: bool = False
+    ) -> dict[str, Any]:
+        """Freeze trading and optionally flatten positions."""
+        self._kill_switch_active = True
+        self.set_read_only(True)
+        if EVENTS_AVAILABLE:
+            self._publish_event(
+                _risk_alert_event(
+                    alert_type="kill_switch",
+                    message=f"Kill switch activated: {reason}",
+                    severity="critical",
+                    details={"close_positions": close_positions},
+                )
+            )
+        if close_positions:
+            self._close_all_positions()
+        if self.audit_logger is not None:
+            self.audit_logger.log_control_action(
+                action="kill_switch_activated",
+                details={"reason": reason, "close_positions": close_positions},
+                execution_mode=self.execution_mode,
+            )
+        return {
+            "kill_switch_active": self._kill_switch_active,
+            "read_only": bool(self.read_only_guard and self.read_only_guard.is_read_only),
+            "positions_closed": close_positions,
+        }
+
+    def release_kill_switch(self) -> dict[str, Any]:
+        """Release the kill switch and re-enable trading if a guard is configured."""
+        self._kill_switch_active = False
+        self.set_read_only(False)
+        if self.audit_logger is not None:
+            self.audit_logger.log_control_action(
+                action="kill_switch_released",
+                execution_mode=self.execution_mode,
+            )
+        return {
+            "kill_switch_active": self._kill_switch_active,
+            "read_only": bool(self.read_only_guard and self.read_only_guard.is_read_only),
+        }
+
+    def _record_equity_snapshot(self, timestamp: pd.Timestamp) -> None:
+        snapshot = {
+            "timestamp": timestamp,
+            "equity": self.account.equity,
+            "balance": self.account.balance,
+            "unrealized_pnl": self.account.unrealized_pnl,
+        }
+        if self.equity_history and self.equity_history[-1]["timestamp"] == timestamp:
+            self.equity_history[-1] = snapshot
+        else:
+            self.equity_history.append(snapshot)
+
+    def run(
+        self,
+        duration_seconds: float,
+        reporter: Any | None = None,
+        *,
+        replay_interval_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Run against wall-clock data or replay historical bars without sleeping."""
+        is_replay = replay_interval_seconds is not None
+        if replay_interval_seconds is not None and replay_interval_seconds <= 0:
+            raise ValueError("replay_interval_seconds must be positive")
+        if is_replay and self.execution_mode != "simulation":
+            raise ValueError("Historical replay only supports simulation execution")
+
+        replay_interval = float(replay_interval_seconds or 0.0)
+        replay_elapsed_seconds = 0.0
+        replay_anchor_timestamp: pd.Timestamp | None = None
+        last_prices: dict[str, float] | None = None
+        last_loop_ts: pd.Timestamp | None = None
+        end_time = time.time() + duration_seconds
+        next_decision_ts = time.time()
+        next_replay_decision_seconds = 0.0
+        next_reconcile_ts = time.time()
+        while not self._shutdown_requested:
+            if is_replay:
+                if replay_elapsed_seconds >= duration_seconds:
+                    break
+            elif time.time() >= end_time:
+                break
+
+            loop_ts = pd.Timestamp.utcnow().floor("s")
+            try:
+                prices = self.market_data.fetch_latest_prices()
+            except StopIteration:
+                if reporter is not None and not is_replay:
+                    reporter.record_warning(loop_ts, "Backtest finished (StopIteration).")
+                break
+            except RuntimeError as exc:
+                if reporter is not None:
+                    reporter.record_warning(loop_ts, str(exc))
+                prices = self.market_data.latest_prices()
+                if not prices:
+                    if is_replay:
+                        self.market_data.append_prices({}, timestamp=loop_ts)
+                        replay_elapsed_seconds += replay_interval
+                    else:
+                        time.sleep(self.poll_interval_seconds)
+                    continue
+
+            if is_replay:
+                if replay_anchor_timestamp is None:
+                    replay_timestamp = getattr(self.market_data, "current_timestamp", None)
+                    if replay_timestamp is None:
+                        replay_timestamp = loop_ts
+                    replay_anchor_timestamp = pd.Timestamp(replay_timestamp)
+                loop_ts = replay_anchor_timestamp + pd.Timedelta(seconds=replay_elapsed_seconds)
+            current_time = _as_utc_datetime(loop_ts)
+            last_prices = dict(prices)
+            last_loop_ts = loop_ts
+
+            self.market_data.append_prices(prices, timestamp=loop_ts)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+
+            if (
+                self.order_executor is not None
+                and self.execution_mode in ("paper", "live")
+                and self.reconcile_interval_seconds
+                and self.reconcile_interval_seconds > 0
+                and time.time() >= next_reconcile_ts
+            ):
+                reconciliation = self.reconcile()
+                self._last_reconciliation = reconciliation
+                next_reconcile_ts = time.time() + self.reconcile_interval_seconds
+                if reconciliation.get("status") == "completed":
+                    discrepancies = reconciliation.get("discrepancies", [])
+                    if discrepancies:
+                        message = (
+                            f"Reconciliation detected {len(discrepancies)} discrepancy entries"
+                        )
+                        if reporter is not None:
+                            reporter.record_warning(loop_ts, f"RECONCILE: {message}")
+                        if self.reconcile_auto_read_only and not bool(
+                            self.read_only_guard and self.read_only_guard.is_read_only
+                        ):
+                            self.activate_kill_switch(
+                                reason="reconciliation discrepancy",
+                                close_positions=False,
+                            )
+                        if EVENTS_AVAILABLE:
+                            self._publish_event(
+                                Event(
+                                    event_type=EventType.RECONCILIATION,
+                                    payload=reconciliation,
+                                    source="trading_engine",
+                                )
+                            )
+                            self._publish_event(
+                                _risk_alert_event(
+                                    alert_type="reconciliation",
+                                    message=message,
+                                    severity="warning",
+                                    details={"discrepancy_count": len(discrepancies)},
+                                )
+                            )
+                elif reconciliation.get("status") == "error" and reporter is not None:
+                    reporter.record_warning(
+                        loop_ts,
+                        f"RECONCILE: {reconciliation.get('error', 'Unknown reconciliation error')}",
+                    )
+
+            # Update risk manager with current equity
+            if self.risk_manager is not None:
+                self.risk_manager.update_equity(self.account.equity, current_time)
+                # Check if force-close is needed (drawdown or equity floor breach)
+                if self.risk_manager.should_force_close(self.account.equity, self.initial_capital):
+                    logger.warning(
+                        "Risk manager triggered force-close at equity %.2f", self.account.equity
+                    )
+                    if EVENTS_AVAILABLE:
+                        self._publish_event(
+                            Event(
+                                event_type=EventType.FORCE_CLOSE,
+                                payload={
+                                    "equity": self.account.equity,
+                                    "message": f"Force-close at equity {self.account.equity:.2f}",
+                                },
+                                source="risk_manager",
+                            )
+                        )
+                    if reporter is not None:
+                        risk_report = self.risk_manager.get_risk_report(self.account.equity)
+                        reporter.record_warning(
+                            loop_ts,
+                            f"RISK: Force-close triggered (drawdown: {risk_report['drawdown']:.2%})",
+                        )
+                    self.shutdown(prices=prices, timestamp=loop_ts)
+                    self._record_equity_snapshot(loop_ts)
+                    if reporter is not None:
+                        reporter.record_tick(loop_ts, self.account, prices)
+                    break
+                # Warn about positions held too long
+                age_warnings = self.risk_manager.get_position_age_warnings(current_time)
+                for warning in age_warnings:
+                    if reporter is not None:
+                        reporter.record_warning(loop_ts, f"RISK: {warning}")
+
+            if self._check_liquidation(prices, loop_ts):
+                if reporter is not None:
+                    reporter.record_warning(
+                        loop_ts, "Account liquidated due to insufficient margin."
+                    )
+                self._record_equity_snapshot(loop_ts)
+                if reporter is not None:
+                    reporter.record_tick(loop_ts, self.account, prices)
+                break
+
+            self._record_equity_snapshot(loop_ts)
+
+            if reporter is not None:
+                reporter.record_tick(loop_ts, self.account, prices)
+
+            decision_due = (
+                replay_elapsed_seconds >= next_replay_decision_seconds
+                if is_replay
+                else time.time() >= next_decision_ts
+            )
+            if decision_due:
+                history_slice = self.market_data.get_recent_window()
+                funding = {}
+                try:
+                    funding = self.market_data.refresh_funding_rates(throttle_seconds=300)
+                except Exception:
+                    funding = {}
+                tools = FinancialTools(history_slice, funding_rates=funding or None)
+                try:
+                    signal = self.agent.generate_trading_signal(loop_ts, history_slice, tools)
+                except Exception as exc:
+                    if reporter is not None:
+                        reporter.record_warning(loop_ts, f"Agent error: {exc}")
+                    signal = {}
+                agent_notes = list(getattr(self.agent, "last_sanitization_notes", []) or [])
+                agent_action = getattr(self.agent, "last_action", "REBALANCE")
+                plan = {
+                    "action": agent_action,
+                    "reasoning": getattr(self.agent, "last_reasoning", ""),
+                    "actions": [
+                        {"symbol": symbol, "target_exposure": signal.get(symbol, 0.0)}
+                        for symbol in self.market_data.symbols
+                    ],
+                    "agent_adjustments": agent_notes,
+                }
+                response = self.execute_trading_plan(
+                    plan,
+                    source="llm_agent",
+                    market_prices=prices,
+                    timestamp=loop_ts,
+                )
+                if response.get("status") != "filled" and reporter is not None:
+                    reason = response.get("reason")
+                    message = (
+                        str(reason.get("message", "Unknown rejection."))
+                        if isinstance(reason, dict)
+                        else "Unknown rejection."
+                    )
+                    reporter.record_warning(loop_ts, f"Trading plan rejected: {message}")
+                else:
+                    adjustments = response.get("adjustments", {})
+                    response_agent_notes = (
+                        adjustments.get("agent") if isinstance(adjustments, dict) else None
+                    )
+                    response_engine_notes = (
+                        adjustments.get("engine") if isinstance(adjustments, dict) else None
+                    )
+                    if reporter is not None and response_agent_notes:
+                        for note in response_agent_notes:
+                            if "HOLD" in note:
+                                print(f"[{loop_ts}] 📌 {note}")
+                            else:
+                                reporter.record_warning(loop_ts, f"Agent clamp: {note}")
+                    if reporter is not None and response_engine_notes:
+                        for note in response_engine_notes:
+                            reporter.record_warning(loop_ts, f"Constraint applied: {note}")
+                if is_replay:
+                    next_replay_decision_seconds = (
+                        replay_elapsed_seconds + self.decision_interval_seconds
+                    )
+                else:
+                    next_decision_ts = time.time() + self.decision_interval_seconds
+
+            if self.account.equity <= 0.0:
+                if reporter is not None:
+                    reporter.record_warning(loop_ts, "Equity depleted; stopping trading loop.")
+                break
+
+            if is_replay:
+                replay_elapsed_seconds += replay_interval
+            else:
+                time.sleep(self.poll_interval_seconds)
+
+        if (
+            self.account.positions
+            and not self._shutdown_requested
+            and last_prices is not None
+            and last_loop_ts is not None
+        ):
+            self._close_all_positions(prices=last_prices, timestamp=last_loop_ts)
+            self._record_equity_snapshot(last_loop_ts)
+
+        summary = {
+            "equity_history": self.equity_history,
+            "trade_log": self.trade_log,
+            "decision_log": self.decision_log,
+            "final_account": {
+                "balance": self.account.balance,
+                "equity": self.account.equity,
+                "realized_pnl": self.account.realized_pnl,
+                "unrealized_pnl": self.account.unrealized_pnl,
+                "margin_used": self.account.margin_used,
+                "available_margin": self.account.available_margin,
+            },
+        }
+        if reporter is not None:
+            summary["reports"] = reporter.finalize(self.equity_history, self.trade_log)
+        return summary
+
+    def _apply_signal(
+        self,
+        exposures: dict[str, float],
+        prices: dict[str, float],
+        timestamp: pd.Timestamp,
+    ) -> dict[str, float]:
+        validation = self._validate_exposures(
+            exposures,
+            allow_rescale=True,
+            previous=self._last_applied_exposures,
+        )
+        notes = validation.get("notes", [])
+        if not validation["valid"]:
+            sanitized = dict.fromkeys(self.market_data.symbols, 0.0)
+        else:
+            sanitized = validation["exposures"]
+        if self.min_long_exposure > 0.0:
+            for symbol, value in sanitized.items():
+                if value > 0.0 and value < self.min_long_exposure:
+                    sanitized[symbol] = 0.0
+        equity = max(self.account.equity, 1e-6)
+        for symbol in self.market_data.symbols:
+            price = prices.get(symbol)
+            if price is None or price <= 0:
+                continue
+            target_exposure = sanitized.get(symbol, 0.0)
+            target_notional = target_exposure * equity
+            target_quantity = target_notional / price
+            self._rebalance_position(symbol, target_quantity, price, timestamp)
+        self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+        self._last_applied_exposures = self._current_exposures(prices)
+        self._last_validation_notes = notes
+        return sanitized
+
+    def _validate_exposures(
+        self,
+        exposures: dict[str, float],
+        allow_rescale: bool,
+        previous: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
+        known_symbols = set(self.market_data.symbols)
+        extra_symbols = sorted(set(exposures) - known_symbols)
+        if extra_symbols:
+            return {
+                "valid": False,
+                "code": "UNKNOWN_SYMBOL",
+                "message": f"Unsupported symbols: {', '.join(extra_symbols)}",
+                "notes": [],
+            }
+
+        per_symbol_cap = max(0.0, float(self.per_symbol_max_exposure))
+        delta_cap = max(0.0, float(self.max_exposure_delta))
+        previous_map = previous or self._last_applied_exposures or {}
+        previous_exposures = {
+            symbol: float(previous_map.get(symbol, 0.0)) for symbol in self.market_data.symbols
+        }
+        notes: list[str] = []
+        sanitized: dict[str, float] = {}
+        for symbol in self.market_data.symbols:
+            raw_value = exposures.get(symbol, 0.0)
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                return {
+                    "valid": False,
+                    "code": "INVALID_NUMBER",
+                    "message": f"Exposure for {symbol} must be numeric.",
+                    "notes": notes,
+                }
+            if not math.isfinite(value):
+                return {
+                    "valid": False,
+                    "code": "INVALID_NUMBER",
+                    "message": f"Exposure for {symbol} must be finite.",
+                    "notes": notes,
+                }
+
+            if per_symbol_cap > 0.0:
+                if allow_rescale:
+                    if abs(value) > per_symbol_cap + 1e-9:
+                        clipped = max(-per_symbol_cap, min(per_symbol_cap, value))
+                        notes.append(
+                            f"{symbol}: clipped {value:.6f} -> {clipped:.6f} by per-symbol limit ±{per_symbol_cap:.6f}"
+                        )
+                        value = clipped
+                else:
+                    if abs(value) > per_symbol_cap + 1e-9:
+                        return {
+                            "valid": False,
+                            "code": "PER_SYMBOL_LIMIT",
+                            "message": f"{symbol} exposure {value:.4f} exceeds +/-{per_symbol_cap:.4f}x.",
+                            "notes": notes,
+                        }
+
+            if delta_cap > 0.0:
+                prior = previous_exposures.get(symbol, 0.0)
+                lower = prior - delta_cap
+                upper = prior + delta_cap
+                if allow_rescale:
+                    if value < lower - 1e-9 or value > upper + 1e-9:
+                        clipped = max(lower, min(upper, value))
+                        notes.append(
+                            f"{symbol}: adjusted {value:.6f} -> {clipped:.6f} by delta limit ±{delta_cap:.6f} (prev {prior:.6f})"
+                        )
+                        value = clipped
+                else:
+                    if value < lower - 1e-9 or value > upper + 1e-9:
+                        delta = value - prior
+                        return {
+                            "valid": False,
+                            "code": "DELTA_LIMIT",
+                            "message": (
+                                f"{symbol} exposure change {delta:.4f} exceeds +/-{delta_cap:.4f}x "
+                                f"from previous {prior:.4f}x."
+                            ),
+                            "notes": notes,
+                        }
+
+            if not allow_rescale and abs(value) > self.max_leverage + 1e-9:
+                return {
+                    "valid": False,
+                    "code": "PER_SYMBOL_LIMIT",
+                    "message": f"{symbol} exposure {value:.4f} exceeds +/-{self.max_leverage:.4f}x.",
+                    "notes": notes,
+                }
+            sanitized[symbol] = value
+
+        if self.max_leverage <= 0.0:
+            if allow_rescale:
+                if any(abs(value) > 1e-9 for value in sanitized.values()):
+                    notes.append("Max leverage is 0; zeroing all exposures.")
+                sanitized = dict.fromkeys(sanitized, 0.0)
+            else:
+                if any(abs(value) > 1e-9 for value in sanitized.values()):
+                    return {
+                        "valid": False,
+                        "code": "LEVERAGE_LIMIT",
+                        "message": "Maximum leverage is 0; no positions may be opened.",
+                        "notes": notes,
+                    }
+                sanitized = dict.fromkeys(sanitized, 0.0)
+        else:
+            total_abs = sum(abs(value) for value in sanitized.values())
+            if total_abs > self.max_leverage + 1e-9 and total_abs > 0.0:
+                if allow_rescale:
+                    scale = self.max_leverage / total_abs
+                    sanitized = {symbol: value * scale for symbol, value in sanitized.items()}
+                    notes.append(
+                        f"Scaled exposures by {scale:.6f} to respect total leverage ±{self.max_leverage:.6f}"
+                    )
+                else:
+                    return {
+                        "valid": False,
+                        "code": "LEVERAGE_LIMIT",
+                        "message": (
+                            f"Aggregate exposure {total_abs:.4f} exceeds maximum leverage {self.max_leverage:.4f}."
+                        ),
+                        "notes": notes,
+                    }
+
+        portfolio_result = self.portfolio_risk.validate_portfolio_constraints(
+            proposed_exposures=sanitized,
+            current_exposures=previous_exposures,
+            allow_rescale=allow_rescale,
+        )
+        if not portfolio_result["valid"]:
+            return {
+                "valid": False,
+                "code": portfolio_result.get("code", "PORTFOLIO_CONSTRAINT"),
+                "message": portfolio_result.get("message", "Portfolio constraint violated"),
+                "notes": notes + portfolio_result.get("notes", []),
+            }
+        sanitized = portfolio_result["exposures"]
+        notes.extend(portfolio_result.get("notes", []))
+
+        return {
+            "valid": True,
+            "exposures": sanitized,
+            "notes": notes,
+            "portfolio_metrics": portfolio_result.get("metrics", {}),
+        }
+
+    def _rebalance_position(
+        self,
+        symbol: str,
+        target_quantity: float,
+        price: float,
+        timestamp: pd.Timestamp,
+    ) -> None:
+        position = self.account.positions.get(symbol)
+
+        def calculate_execution(qty: float, base_price: float) -> tuple[float, float, float]:
+            if self.order_executor is not None and self.execution_mode in ("paper", "live"):
+                order = Order(
+                    symbol=symbol,
+                    side=OrderSide.BUY if qty > 0 else OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    quantity=abs(qty),
+                    price=base_price,
+                    reduce_only=(position is not None),
+                )
+                result = self.order_executor.submit_order(order)
+                if result.filled_quantity <= 0 or result.status not in {
+                    OrderStatus.FILLED,
+                    OrderStatus.PARTIALLY_FILLED,
+                }:
+                    reject_reason = (
+                        result.reject_reason or f"Executor returned {result.status.value}"
+                    )
+                    raise RuntimeError(f"{symbol} order rejected: {reject_reason}")
+                exec_price = result.avg_fill_price or base_price
+                commission = result.total_commission
+                slippage_cost = result.total_slippage_cost
+                self.portfolio_risk.accumulate_costs(commission, slippage_cost)
+                return exec_price, commission, slippage_cost
+            if qty > 0:
+                exec_price = base_price * (1 + self.slippage)
+            else:
+                exec_price = base_price * (1 - self.slippage)
+            commission = abs(qty * exec_price) * self.commission_rate
+            slippage_cost = abs(qty * base_price * self.slippage)
+            self.portfolio_risk.accumulate_costs(commission, slippage_cost)
+            return exec_price, commission, slippage_cost
+
+        if position is None:
+            if abs(target_quantity) < 1e-8:
+                return
+            exec_price, comm, slip = calculate_execution(target_quantity, price)
+            self.account.balance -= comm
+            self.account.realized_pnl -= comm
+            leverage = self._compute_position_leverage(exec_price, target_quantity)
+            self.account.positions[symbol] = FuturesPosition(
+                symbol=symbol,
+                quantity=target_quantity,
+                entry_price=exec_price,
+                leverage=leverage,
+                opened_at=timestamp,
+            )
+            self.trade_log.append(
+                {
+                    "timestamp": timestamp.isoformat(),
+                    "symbol": symbol,
+                    "action": "open",
+                    "quantity": target_quantity,
+                    "price": exec_price,
+                    "commission": comm,
+                    "slippage_cost": slip,
+                    "realized_pnl": -comm,
+                }
+            )
+            if self.risk_manager is not None:
+                self.risk_manager.record_position_open(symbol, _as_utc_datetime(timestamp))
+            if EVENTS_AVAILABLE:
+                self._publish_event(
+                    _order_filled_event(
+                        symbol=symbol,
+                        side="BUY" if target_quantity > 0 else "SELL",
+                        quantity=abs(target_quantity),
+                        price=exec_price,
+                        commission=comm,
+                    )
+                )
+            return
+
+        existing_qty = position.quantity
+        if abs(target_quantity) < 1e-8:
+            delta_qty = -existing_qty
+            exec_price, comm, slip = calculate_execution(delta_qty, price)
+            realized = (exec_price - position.entry_price) * existing_qty
+            self.account.balance += realized - comm
+            self.account.realized_pnl += realized - comm
+            self.trade_log.append(
+                {
+                    "timestamp": timestamp.isoformat(),
+                    "symbol": symbol,
+                    "action": "close",
+                    "quantity": existing_qty,
+                    "price": exec_price,
+                    "commission": comm,
+                    "slippage_cost": slip,
+                    "realized_pnl": realized - comm,
+                }
+            )
+            if self.risk_manager is not None:
+                self.risk_manager.record_trade_result(
+                    realized - comm,
+                    _as_utc_datetime(timestamp),
+                )
+                self.risk_manager.record_position_close(symbol)
+            if EVENTS_AVAILABLE:
+                self._publish_event(
+                    _order_filled_event(
+                        symbol=symbol,
+                        side="SELL" if existing_qty > 0 else "BUY",
+                        quantity=abs(existing_qty),
+                        price=exec_price,
+                        commission=comm,
+                    )
+                )
+            del self.account.positions[symbol]
+            return
+
+        if existing_qty * target_quantity > 0:
+            if abs(target_quantity) > abs(existing_qty):
+                delta_qty = target_quantity - existing_qty
+                exec_price, comm, slip = calculate_execution(delta_qty, price)
+                self.account.balance -= comm
+                self.account.realized_pnl -= comm
+                weighted_notional = position.entry_price * existing_qty + exec_price * delta_qty
+                position.quantity = target_quantity
+                position.entry_price = weighted_notional / target_quantity
+                position.leverage = self._compute_position_leverage(price, target_quantity)
+                self.trade_log.append(
+                    {
+                        "timestamp": timestamp.isoformat(),
+                        "symbol": symbol,
+                        "action": "increase",
+                        "quantity": delta_qty,
+                        "price": exec_price,
+                        "commission": comm,
+                        "slippage_cost": slip,
+                        "realized_pnl": -comm,
+                    }
+                )
+            else:
+                closed_qty = existing_qty - target_quantity
+                delta_qty = -closed_qty
+                exec_price, comm, slip = calculate_execution(target_quantity - existing_qty, price)
+                realized = (exec_price - position.entry_price) * closed_qty
+                self.account.balance += realized - comm
+                self.account.realized_pnl += realized - comm
+                position.quantity = target_quantity
+                self.trade_log.append(
+                    {
+                        "timestamp": timestamp.isoformat(),
+                        "symbol": symbol,
+                        "action": "reduce",
+                        "quantity": closed_qty,
+                        "price": exec_price,
+                        "commission": comm,
+                        "slippage_cost": slip,
+                        "realized_pnl": realized - comm,
+                    }
+                )
+                if abs(position.quantity) < 1e-8:
+                    del self.account.positions[symbol]
+            return
+
+        delta_close = -existing_qty
+        exec_close, comm_close, slip_close = calculate_execution(delta_close, price)
+        realized = (exec_close - position.entry_price) * existing_qty
+        self.account.balance += realized - comm_close
+        self.account.realized_pnl += realized - comm_close
+        self.trade_log.append(
+            {
+                "timestamp": timestamp.isoformat(),
+                "symbol": symbol,
+                "action": "reverse_close",
+                "quantity": existing_qty,
+                "price": exec_close,
+                "commission": comm_close,
+                "slippage_cost": slip_close,
+                "realized_pnl": realized - comm_close,
+            }
+        )
+
+        exec_open, comm_open, slip_open = calculate_execution(target_quantity, price)
+        self.account.balance -= comm_open
+        self.account.realized_pnl -= comm_open
+        leverage = self._compute_position_leverage(exec_open, target_quantity)
+        self.account.positions[symbol] = FuturesPosition(
+            symbol=symbol,
+            quantity=target_quantity,
+            entry_price=exec_open,
+            leverage=leverage,
+            opened_at=timestamp,
+        )
+        self.trade_log.append(
+            {
+                "timestamp": timestamp.isoformat(),
+                "symbol": symbol,
+                "action": "reverse_open",
+                "quantity": target_quantity,
+                "price": exec_open,
+                "commission": comm_open,
+                "slippage_cost": slip_open,
+                "realized_pnl": -comm_open,
+            }
+        )
+
+    def _check_liquidation(self, prices: dict[str, float], timestamp: pd.Timestamp) -> bool:
+        self.portfolio_risk.verify_equity_consistency(
+            self.account.balance,
+            self.account.unrealized_pnl,
+            self.account.equity,
+        )
+
+        is_liquidated = False
+        trigger_reason = ""
+
+        if self.account.equity <= 0:
+            is_liquidated = True
+            trigger_reason = f"Equity depleted: {self.account.equity:.2f} <= 0"
+        elif (
+            self.account.maintenance_margin_req > 0
+            and self.account.equity < self.account.maintenance_margin_req
+        ):
+            is_liquidated = True
+            trigger_reason = (
+                f"Margin call: equity {self.account.equity:.2f} < "
+                f"maintenance_margin {self.account.maintenance_margin_req:.2f}"
+            )
+
+        if is_liquidated:
+            self._liquidation_audit = self.portfolio_risk.create_liquidation_audit_log(
+                timestamp=timestamp.isoformat(),
+                trigger_reason=trigger_reason,
+                balance=self.account.balance,
+                unrealized_pnl=self.account.unrealized_pnl,
+                equity=self.account.equity,
+                positions=self.account.positions,
+                prices=prices,
+            )
+
+            for symbol, position in list(self.account.positions.items()):
+                qty = -position.quantity
+                if qty > 0:
+                    price = prices.get(symbol, position.entry_price) * (1 + self.slippage)
+                else:
+                    price = prices.get(symbol, position.entry_price) * (1 - self.slippage)
+
+                commission = abs(qty * price) * self.commission_rate
+                slippage_cost = abs(qty * prices.get(symbol, position.entry_price) * self.slippage)
+                self.portfolio_risk.accumulate_costs(commission, slippage_cost)
+
+                realized = (price - position.entry_price) * position.quantity
+                self.account.balance += realized - commission
+                self.account.realized_pnl += realized - commission
+
+                self.trade_log.append(
+                    {
+                        "timestamp": timestamp.isoformat(),
+                        "symbol": symbol,
+                        "action": "liquidation",
+                        "quantity": position.quantity,
+                        "price": price,
+                        "commission": commission,
+                        "slippage_cost": slippage_cost,
+                        "realized_pnl": realized - commission,
+                        "liquidation_audit": True,
+                    }
+                )
+            self.account.positions.clear()
+            self.account.equity = self.account.balance
+            self.account.margin_used = 0
+            self.account.available_margin = 0
+            return True
+        return False
+
+    def _compute_position_leverage(self, price: float, quantity: float) -> float:
+        equity = max(self.account.equity, 1e-6)
+        notional = abs(price * quantity)
+        if equity <= 0:
+            return self.max_leverage
+        leverage = notional / equity
+        return max(1.0, min(self.max_leverage, leverage))
+
+    def execute_trading_plan(
+        self,
+        plan: dict[str, Any],
+        *,
+        source: str = "external_command",
+        market_prices: dict[str, float] | None = None,
+        timestamp: pd.Timestamp | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        timestamp = (
+            pd.Timestamp(timestamp) if timestamp is not None else pd.Timestamp.utcnow().floor("s")
+        )
+
+        def record_decision(*args, **kwargs) -> None:
+            if not dry_run:
+                self._log_decision(*args, **kwargs)
+
+        raw_agent_notes = plan.get("agent_adjustments") if isinstance(plan, dict) else []
+        if isinstance(raw_agent_notes, (list, tuple, set)):
+            agent_notes = [str(note) for note in raw_agent_notes if note]
+        elif raw_agent_notes:
+            agent_notes = [str(raw_agent_notes)]
+        else:
+            agent_notes = []
+        plan_action = plan.get("action", "REBALANCE") if isinstance(plan, dict) else "REBALANCE"
+        prices = dict(market_prices) if market_prices is not None else None
+        if prices is None:
+            try:
+                prices = self.market_data.fetch_latest_prices()
+            except RuntimeError as exc:
+                prices = self.market_data.latest_prices()
+                if not prices:
+                    reason = {
+                        "code": "MARKET_DATA_UNAVAILABLE",
+                        "message": str(exc),
+                    }
+                    response = {
+                        "status": "rejected",
+                        "timestamp": timestamp.isoformat(),
+                        "reason": reason,
+                        "positions": [],
+                        "account": self._account_snapshot(),
+                    }
+                    record_decision(
+                        timestamp,
+                        source,
+                        requested_exposure={},
+                        applied_exposure={},
+                        reasoning=plan.get("reasoning", ""),
+                        status="rejected",
+                        reason=reason,
+                        agent_notes=agent_notes,
+                        engine_notes=None,
+                        action=plan_action,
+                    )
+                    return response
+            self.market_data.append_prices(prices, timestamp=timestamp)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+
+        current_exposures = self._current_exposures(prices)
+        requested_exposures = current_exposures.copy()
+        for action in plan.get("actions", []):
+            symbol = str(action.get("symbol", "")).upper()
+            if not symbol:
+                continue
+            value = action.get("target_exposure", 0.0)
+            requested_exposures[symbol] = value
+
+        allow_rescale = source == "llm_agent"
+        validation = self._validate_exposures(
+            requested_exposures,
+            allow_rescale=allow_rescale,
+            previous=current_exposures,
+        )
+        engine_notes = validation.get("notes", [])
+        if not validation["valid"]:
+            reason = {
+                "code": validation.get("code", "VALIDATION_ERROR"),
+                "message": validation.get("message", "Exposure validation failed."),
+            }
+            response = {
+                "status": "rejected",
+                "timestamp": timestamp.isoformat(),
+                "reason": reason,
+                "positions": self._positions_snapshot(prices),
+                "account": self._account_snapshot(),
+            }
+            record_decision(
+                timestamp,
+                source,
+                requested_exposure=requested_exposures,
+                applied_exposure=current_exposures,
+                reasoning=plan.get("reasoning", ""),
+                status="rejected",
+                reason=reason,
+                agent_notes=agent_notes,
+                engine_notes=engine_notes,
+                action=plan_action,
+            )
+            return response
+
+        exposures = validation["exposures"]
+
+        # Risk manager pre-trade check
+        if self.risk_manager is not None:
+            current_time_dt = _as_utc_datetime(timestamp)
+            for action in plan.get("actions", []):
+                sym = str(action.get("symbol", "")).upper()
+                target_exp = float(action.get("target_exposure", 0.0))
+                if not sym:
+                    continue
+                risk_ok, risk_violations = self.risk_manager.check_order(
+                    symbol=sym,
+                    target_exposure=target_exp,
+                    current_equity=self.account.equity,
+                    initial_equity=self.initial_capital,
+                    current_time=current_time_dt,
+                    record_violation=not dry_run,
+                )
+                if not risk_ok:
+                    logger.warning("Risk check failed for %s: %s", sym, risk_violations)
+                    # Reduce exposure to 0 for violated symbols
+                    exposures[sym] = current_exposures.get(sym, 0.0)
+                    engine_notes.append(f"RISK: {sym} blocked - {'; '.join(risk_violations)}")
+
+        if self.min_long_exposure > 0.0:
+            violating = [
+                symbol
+                for symbol, target in exposures.items()
+                if target > 0.0 and target < self.min_long_exposure
+            ]
+            if violating:
+                reason = {
+                    "code": "MIN_LONG_EXPOSURE",
+                    "message": (
+                        "Positive exposures must be at least "
+                        f"{self.min_long_exposure:.4f}x equity; violating symbols: {', '.join(violating)}."
+                    ),
+                }
+                response = {
+                    "status": "rejected",
+                    "timestamp": timestamp.isoformat(),
+                    "reason": reason,
+                    "positions": self._positions_snapshot(prices),
+                    "account": self._account_snapshot(),
+                }
+                record_decision(
+                    timestamp,
+                    source,
+                    requested_exposure=exposures,
+                    applied_exposure=current_exposures,
+                    reasoning=plan.get("reasoning", ""),
+                    status="rejected",
+                    reason=reason,
+                    agent_notes=agent_notes,
+                    engine_notes=engine_notes,
+                    action=plan_action,
+                )
+                return response
+
+        equity = self.account.equity
+        if equity <= 0 and any(abs(value) > 1e-9 for value in exposures.values()):
+            reason = {
+                "code": "INSUFFICIENT_FUNDS",
+                "message": "Account equity is non-positive; cannot open positions.",
+            }
+            response = {
+                "status": "rejected",
+                "timestamp": timestamp.isoformat(),
+                "reason": reason,
+                "positions": self._positions_snapshot(prices),
+                "account": self._account_snapshot(),
+            }
+            record_decision(
+                timestamp,
+                source,
+                requested_exposure=exposures,
+                applied_exposure=current_exposures,
+                reasoning=plan.get("reasoning", ""),
+                status="rejected",
+                reason=reason,
+                agent_notes=agent_notes,
+                engine_notes=engine_notes,
+                action=plan_action,
+            )
+            return response
+
+        margin_required = self._margin_requirement(exposures, equity)
+        if margin_required > equity + 1e-9:
+            reason = {
+                "code": "INSUFFICIENT_FUNDS",
+                "message": f"Required margin {margin_required:.2f} exceeds available equity {equity:.2f}.",
+            }
+            response = {
+                "status": "rejected",
+                "timestamp": timestamp.isoformat(),
+                "reason": reason,
+                "positions": self._positions_snapshot(prices),
+                "account": self._account_snapshot(),
+            }
+            record_decision(
+                timestamp,
+                source,
+                requested_exposure=exposures,
+                applied_exposure=current_exposures,
+                reasoning=plan.get("reasoning", ""),
+                status="rejected",
+                reason=reason,
+                agent_notes=agent_notes,
+                engine_notes=engine_notes,
+                action=plan_action,
+            )
+            return response
+
+        if dry_run:
+            projected_orders = []
+            for symbol in self.market_data.symbols:
+                price = prices.get(symbol)
+                if price is None or price <= 0:
+                    continue
+                current_position = self.account.positions.get(symbol)
+                current_quantity = (
+                    current_position.quantity if current_position is not None else 0.0
+                )
+                target_exposure = float(exposures.get(symbol, 0.0))
+                target_quantity = target_exposure * equity / price
+                quantity_delta = target_quantity - current_quantity
+                if abs(quantity_delta) <= 1e-9:
+                    continue
+                estimated_notional = abs(quantity_delta * price)
+                projected_orders.append(
+                    {
+                        "symbol": symbol,
+                        "side": "BUY" if quantity_delta > 0 else "SELL",
+                        "quantity": abs(quantity_delta),
+                        "reference_price": price,
+                        "estimated_notional": estimated_notional,
+                        "estimated_commission": estimated_notional * self.commission_rate,
+                    }
+                )
+
+            control_blockers = []
+            if self._shutdown_requested:
+                control_blockers.append("shutdown_requested")
+            if self._kill_switch_active:
+                control_blockers.append("kill_switch_active")
+            if self.read_only_guard is not None and self.read_only_guard.is_read_only:
+                control_blockers.append("read_only")
+            return {
+                "status": "preview",
+                "valid": not control_blockers,
+                "timestamp": timestamp.isoformat(),
+                "requested_exposures": requested_exposures,
+                "target_exposures": exposures,
+                "current_exposures": current_exposures,
+                "projected_orders": projected_orders,
+                "estimated_commission": sum(
+                    order["estimated_commission"] for order in projected_orders
+                ),
+                "margin_required": margin_required,
+                "margin_available": equity,
+                "control_blockers": control_blockers,
+                "adjustments": {"agent": agent_notes, "engine": engine_notes},
+                "reason": None
+                if not control_blockers
+                else {
+                    "code": "CONTROL_BLOCKED",
+                    "message": f"Execution blocked by: {', '.join(control_blockers)}.",
+                },
+            }
+
+        applied_exposures: dict[str, float] = {}
+        try:
+            for symbol in self.market_data.symbols:
+                price = prices.get(symbol)
+                if price is None or price <= 0:
+                    continue
+                target_exposure = float(exposures.get(symbol, 0.0))
+                target_notional = target_exposure * equity
+                target_quantity = target_notional / price if price else 0.0
+                self._rebalance_position(symbol, target_quantity, price, timestamp)
+                applied_exposures[symbol] = target_exposure
+        except Exception as exc:
+            logger.error("Trading plan execution failed: %s", exc)
+            self._sync_account_from_executor(timestamp, prices)
+            self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+            if self.execution_mode in ("paper", "live"):
+                self.activate_kill_switch(
+                    reason=f"order execution failure: {exc}", close_positions=False
+                )
+            reason = {
+                "code": "ORDER_EXECUTION_ERROR",
+                "message": str(exc),
+            }
+            response = {
+                "status": "rejected",
+                "timestamp": timestamp.isoformat(),
+                "reason": reason,
+                "positions": self._positions_snapshot(prices),
+                "account": self._account_snapshot(),
+            }
+            record_decision(
+                timestamp,
+                source,
+                requested_exposure=exposures,
+                applied_exposure=self._current_exposures(prices),
+                reasoning=plan.get("reasoning", ""),
+                status="rejected",
+                reason=reason,
+                agent_notes=agent_notes,
+                engine_notes=engine_notes,
+                action=plan_action,
+            )
+            return response
+
+        self._sync_account_from_executor(timestamp, prices)
+
+        self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+        self._last_applied_exposures = self._current_exposures(prices)
+        self._last_validation_notes = engine_notes
+        response = {
+            "status": "filled",
+            "timestamp": timestamp.isoformat(),
+            "applied_exposures": applied_exposures,
+            "positions": self._positions_snapshot(prices),
+            "account": self._account_snapshot(),
+            "reason": None,
+            "adjustments": {
+                "agent": agent_notes,
+                "engine": engine_notes,
+            },
+        }
+
+        # Audit logging for live/paper mode
+        if self.audit_logger is not None and self.execution_mode in ("live", "paper"):
+            for sym, exp in applied_exposures.items():
+                if abs(exp) > 1e-9 or sym in self.account.positions:
+                    try:
+                        self.audit_logger.log_order(
+                            action="rebalance",
+                            symbol=sym,
+                            side="BUY" if exp > 0 else "SELL" if exp < 0 else "FLAT",
+                            quantity=abs(exp * max(equity, 1e-6) / prices.get(sym, 1.0)),
+                            price=prices.get(sym),
+                            order_id=None,
+                            execution_mode=self.execution_mode,
+                        )
+                    except Exception as exc:
+                        logger.debug("Audit log write failed: %s", exc)
+
+        reasoning = plan.get("reasoning", "")
+        record_decision(
+            timestamp,
+            source,
+            requested_exposure=exposures,
+            applied_exposure=applied_exposures,
+            reasoning=reasoning,
+            status="filled",
+            reason=None,
+            agent_notes=agent_notes,
+            engine_notes=engine_notes,
+            action=plan_action,
+        )
+
+        return response
+
+    def _log_decision(
+        self,
+        timestamp: pd.Timestamp,
+        source: str,
+        *,
+        requested_exposure: dict[str, float],
+        applied_exposure: dict[str, float],
+        reasoning: str,
+        status: str,
+        reason: dict[str, Any] | None,
+        agent_notes: list[str] | None,
+        engine_notes: list[str] | None,
+        action: str = "REBALANCE",
+    ) -> None:
+        entry: dict[str, Any] = {
+            "timestamp": timestamp.isoformat(),
+            "source": source,
+            "action": action,
+            "requested_exposure": requested_exposure,
+            "applied_exposure": applied_exposure,
+            "reasoning": reasoning,
+            "equity": self.account.equity,
+            "status": status,
+        }
+        if reason is not None:
+            entry["reason"] = reason
+        if agent_notes:
+            entry["agent_notes"] = list(agent_notes)
+        if engine_notes:
+            entry["engine_notes"] = list(engine_notes)
+        self.decision_log.append(entry)
+
+    def _current_exposures(self, prices: dict[str, float]) -> dict[str, float]:
+        equity = self.account.equity if self.account.equity != 0 else 0.0
+        exposures: dict[str, float] = {}
+        if abs(equity) < 1e-9:
+            return dict.fromkeys(self.market_data.symbols, 0.0)
+        for symbol in self.market_data.symbols:
+            position = self.account.positions.get(symbol)
+            price = prices.get(symbol)
+            if position is None or price is None:
+                exposures[symbol] = 0.0
+            else:
+                exposures[symbol] = (position.quantity * price) / equity
+        return exposures
+
+    def _margin_requirement(self, exposures: dict[str, float], equity: float) -> float:
+        if self.max_leverage <= 0:
+            return float("inf")
+        total_notional = sum(abs(value) * max(equity, 0.0) for value in exposures.values())
+        return total_notional / self.max_leverage
+
+    def _positions_snapshot(self, prices: dict[str, float]) -> list[dict[str, Any]]:
+        snapshot: list[dict[str, Any]] = []
+        for symbol in self.market_data.symbols:
+            position = self.account.positions.get(symbol)
+            price = prices.get(symbol)
+            if position is None:
+                snapshot.append(
+                    {
+                        "symbol": symbol,
+                        "quantity": 0.0,
+                        "entry_price": None,
+                        "mark_price": price,
+                        "leverage": 0.0,
+                        "unrealized_pnl": 0.0,
+                    }
+                )
+                continue
+            mark_price = price if price is not None else position.entry_price
+            unrealized = 0.0
+            if mark_price is not None:
+                unrealized = (mark_price - position.entry_price) * position.quantity
+            snapshot.append(
+                {
+                    "symbol": symbol,
+                    "quantity": position.quantity,
+                    "entry_price": position.entry_price,
+                    "mark_price": mark_price,
+                    "leverage": position.leverage,
+                    "unrealized_pnl": unrealized,
+                }
+            )
+        return snapshot
+
+    def _account_snapshot(self) -> dict[str, float]:
+        return {
+            "balance": float(self.account.balance),
+            "equity": float(self.account.equity),
+            "available_margin": float(self.account.available_margin),
+            "margin_used": float(self.account.margin_used),
+            "realized_pnl": float(self.account.realized_pnl),
+            "unrealized_pnl": float(self.account.unrealized_pnl),
+        }

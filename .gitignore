@@ -2,6 +2,7 @@
 .env
 .env.*
 *.env
+!.env.example
 
 # Python
 __pycache__/
@@ -43,13 +44,15 @@ env/
 Thumbs.db
 
 # Logs (keep directory but ignore contents)
-logs/*.json
-logs/*.jsonl
-src/logs/*.json
-src/logs/*.jsonl
+logs/*
+!logs/.gitkeep
+!logs/audit/
+logs/audit/*
+!logs/audit/.gitkeep
 
 # Test cache
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
@@ -66,6 +69,15 @@ htmlcov/
 
 # Coverage
 coverage.xml
+
+# Local generated artifacts
+financial_analysis.png
+python_code.pdf
+output.txt
+reports/benchmark_report.json
+reports/benchmark_report.md
+benchmark/results/*.json
+benchmark/data/market_data_*.json
 
 # Config (keep example)
 config.yaml

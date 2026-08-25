@@ -6,11 +6,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from risk_manager import RiskLimits, RiskManager, RiskState
+from mapeval.risk_manager import RiskLimits, RiskManager
 
 
 class TestRiskLimits:
@@ -37,19 +38,36 @@ class TestRiskManagerInitialization:
         rm = RiskManager()
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         rm.update_equity(110_000.0, now)
         assert rm.state.peak_equity == 110_000.0
-        
+
         rm.update_equity(105_000.0, now)
         assert rm.state.peak_equity == 110_000.0
+
+    def test_dry_run_risk_check_does_not_record_violation(self):
+        rm = RiskManager(RiskLimits(max_drawdown=0.10))
+        rm.initialize(100_000.0)
+
+        ok, violations = rm.check_order(
+            symbol="BTCUSDT",
+            target_exposure=1.0,
+            current_equity=80_000.0,
+            initial_equity=100_000.0,
+            current_time=datetime.now(timezone.utc),
+            record_violation=False,
+        )
+
+        assert ok is False
+        assert violations
+        assert rm.violations == []
 
 
 class TestDrawdownCheck:
     def test_within_limit(self):
         rm = RiskManager(RiskLimits(max_drawdown=0.20))
         rm.initialize(100_000.0)
-        
+
         ok, msg = rm.check_drawdown(90_000.0)
         assert ok is True
         assert msg is None
@@ -57,7 +75,7 @@ class TestDrawdownCheck:
     def test_exceeds_limit(self):
         rm = RiskManager(RiskLimits(max_drawdown=0.20))
         rm.initialize(100_000.0)
-        
+
         ok, msg = rm.check_drawdown(75_000.0)
         assert ok is False
         assert "drawdown exceeded" in msg.lower()
@@ -67,14 +85,14 @@ class TestDailyLossCheck:
     def test_within_limit(self):
         rm = RiskManager(RiskLimits(max_daily_loss=0.05))
         rm.initialize(100_000.0)
-        
-        ok, msg = rm.check_daily_loss(97_000.0)
+
+        ok, _msg = rm.check_daily_loss(97_000.0)
         assert ok is True
 
     def test_exceeds_limit(self):
         rm = RiskManager(RiskLimits(max_daily_loss=0.05))
         rm.initialize(100_000.0)
-        
+
         ok, msg = rm.check_daily_loss(90_000.0)
         assert ok is False
         assert "daily loss" in msg.lower()
@@ -85,32 +103,32 @@ class TestConsecutiveLosses:
         rm = RiskManager(RiskLimits(max_consecutive_losses=5))
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         for _ in range(3):
             rm.record_trade_result(-100.0, now)
-        
-        ok, msg = rm.check_consecutive_losses()
+
+        ok, _msg = rm.check_consecutive_losses()
         assert ok is True
 
     def test_at_limit(self):
         rm = RiskManager(RiskLimits(max_consecutive_losses=5))
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         for _ in range(5):
             rm.record_trade_result(-100.0, now)
-        
-        ok, msg = rm.check_consecutive_losses()
+
+        ok, _msg = rm.check_consecutive_losses()
         assert ok is False
 
     def test_reset_on_win(self):
         rm = RiskManager(RiskLimits(max_consecutive_losses=5))
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         for _ in range(4):
             rm.record_trade_result(-100.0, now)
-        
+
         rm.record_trade_result(50.0, now)
         assert rm.state.consecutive_losses == 0
 
@@ -120,18 +138,18 @@ class TestCooldown:
         rm = RiskManager()
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
-        ok, msg = rm.check_cooldown(now)
+
+        ok, _msg = rm.check_cooldown(now)
         assert ok is True
 
     def test_cooldown_after_multiple_losses(self):
         rm = RiskManager(RiskLimits(cooldown_after_loss_seconds=300))
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         for _ in range(3):
             rm.record_trade_result(-100.0, now)
-        
+
         ok, msg = rm.check_cooldown(now + timedelta(seconds=60))
         assert ok is False
         assert "cooldown" in msg.lower()
@@ -140,11 +158,11 @@ class TestCooldown:
         rm = RiskManager(RiskLimits(cooldown_after_loss_seconds=300))
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         for _ in range(3):
             rm.record_trade_result(-100.0, now)
-        
-        ok, msg = rm.check_cooldown(now + timedelta(seconds=400))
+
+        ok, _msg = rm.check_cooldown(now + timedelta(seconds=400))
         assert ok is True
 
 
@@ -152,7 +170,7 @@ class TestExposureAdjustment:
     def test_no_adjustment_when_healthy(self):
         rm = RiskManager()
         rm.initialize(100_000.0)
-        
+
         adjusted = rm.adjust_exposure_for_risk(5.0, 100_000.0)
         assert adjusted == pytest.approx(5.0)
 
@@ -160,7 +178,7 @@ class TestExposureAdjustment:
         rm = RiskManager(RiskLimits(max_drawdown=0.20))
         rm.initialize(100_000.0)
         rm.state.peak_equity = 100_000.0
-        
+
         adjusted = rm.adjust_exposure_for_risk(5.0, 85_000.0)
         assert adjusted < 5.0
 
@@ -168,10 +186,10 @@ class TestExposureAdjustment:
         rm = RiskManager()
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
-        
+
         for _ in range(3):
             rm.record_trade_result(-100.0, now)
-        
+
         adjusted = rm.adjust_exposure_for_risk(5.0, 100_000.0)
         assert adjusted < 5.0
 
@@ -180,19 +198,19 @@ class TestForceClose:
     def test_force_close_on_max_drawdown(self):
         rm = RiskManager(RiskLimits(max_drawdown=0.20))
         rm.initialize(100_000.0)
-        
+
         assert rm.should_force_close(75_000.0, 100_000.0) is True
 
     def test_force_close_on_equity_floor(self):
         rm = RiskManager(RiskLimits(min_equity_floor=0.10))
         rm.initialize(100_000.0)
-        
+
         assert rm.should_force_close(5_000.0, 100_000.0) is True
 
     def test_no_force_close_when_healthy(self):
         rm = RiskManager()
         rm.initialize(100_000.0)
-        
+
         assert rm.should_force_close(95_000.0, 100_000.0) is False
 
 
@@ -202,9 +220,9 @@ class TestRiskReport:
         rm.initialize(100_000.0)
         now = datetime.now(timezone.utc)
         rm.update_equity(95_000.0, now)
-        
+
         report = rm.get_risk_report(95_000.0)
-        
+
         assert "current_equity" in report
         assert "peak_equity" in report
         assert "drawdown" in report
@@ -212,4 +230,3 @@ class TestRiskReport:
         assert report["current_equity"] == 95_000.0
         assert report["peak_equity"] == 100_000.0
         assert report["drawdown"] == pytest.approx(0.05)
-

@@ -5,24 +5,27 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
 import pytest
 
-from exposure_utils import compute_fallback_exposures, sanitize_exposures
-from order_executor import (
+from mapeval.data_manager import BacktestMarketData
+from mapeval.exposure_utils import compute_fallback_exposures, sanitize_exposures
+from mapeval.order_executor import (
     PaperExecutor,
     SimulatedExecutorBase,
     SimulationExecutor,
     create_executor,
 )
-from order_models import Order, OrderSide, OrderStatus, OrderType
+from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType
 
 
 # ---------------------------------------------------------------------------
 # exposure_utils.sanitize_exposures
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizeExposures:
     def test_clips_per_symbol(self):
@@ -102,8 +105,10 @@ class TestSanitizeExposures:
 # exposure_utils.compute_fallback_exposures
 # ---------------------------------------------------------------------------
 
+
 class MockTools:
     """Mock tools for testing fallback exposures."""
+
     def calculate_moving_average(self, symbol: str, time: pd.Timestamp, window: int) -> float:
         if window == 21:
             return 55000.0
@@ -140,6 +145,7 @@ class TestComputeFallbackExposures:
 # ---------------------------------------------------------------------------
 # SimulatedExecutorBase shared fill logic
 # ---------------------------------------------------------------------------
+
 
 class TestSimulatedExecutorBase:
     def test_simulation_inherits_base(self):
@@ -211,9 +217,9 @@ class TestSimulatedExecutorBase:
 # BaseMarketData (via BacktestMarketData)
 # ---------------------------------------------------------------------------
 
+
 class TestBaseMarketData:
     def _make_backtest_data(self):
-        from data_manager import BacktestMarketData
         dates = pd.date_range("2024-01-01", periods=20, freq="h")
         df = pd.DataFrame(
             {"BTCUSDT_Close": range(50000, 50020), "ETHUSDT_Close": range(3000, 3020)},
@@ -229,7 +235,6 @@ class TestBaseMarketData:
         assert "ETHUSDT" in prices
 
     def test_latest_prices_empty(self):
-        from data_manager import BacktestMarketData
         df = pd.DataFrame()
         data = BacktestMarketData(df, symbols=["BTCUSDT"], lookback=10)
         assert data.latest_prices() == {}

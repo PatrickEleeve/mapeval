@@ -5,20 +5,22 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
 import pytest
 
-from performance_analyzer import PerformanceAnalyzer
-from log_manager import SessionLogger
-from factor_evaluator import FactorEvaluator
-from data_manager import BacktestMarketData
+from mapeval.data_manager import BacktestMarketData
+from mapeval.factor_evaluator import FactorEvaluator
+from mapeval.log_manager import SessionLogger
+from mapeval.performance_analyzer import PerformanceAnalyzer
 
 
 # ---------------------------------------------------------------------------
 # performance_analyzer: calculate_returns() called only once in get_full_report
 # ---------------------------------------------------------------------------
+
 
 class TestPerformanceAnalyzerCachedReturns:
     """Verify that optional `returns` parameter avoids redundant iteration."""
@@ -69,6 +71,7 @@ class TestPerformanceAnalyzerCachedReturns:
 # log_manager: shallow copy is sufficient (no deep-copy of nested lists)
 # ---------------------------------------------------------------------------
 
+
 class TestLogManagerShallowCopy:
     def test_save_session_does_not_mutate_original_summary(self, tmp_path):
         logger = SessionLogger(log_dir=tmp_path)
@@ -82,14 +85,20 @@ class TestLogManagerShallowCopy:
             "decision_log": decision_log,
         }
         original_keys = set(summary.keys())
-        logger.save_session(run_args={"llm_provider": "test"}, summary=summary, start_time="2024-01-01T00:00:00Z")
+        logger.save_session(
+            run_args={"llm_provider": "test"}, summary=summary, start_time="2024-01-01T00:00:00Z"
+        )
         # Shallow copy means original summary should not have 'llm_reasoning' added
         assert set(summary.keys()) == original_keys
 
     def test_save_session_writes_reasoning_to_file(self, tmp_path):
         logger = SessionLogger(log_dir=tmp_path)
         decision_log = [
-            {"timestamp": "2024-01-01T00:00:00Z", "reasoning": "upward trend", "action": "REBALANCE"},
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "reasoning": "upward trend",
+                "action": "REBALANCE",
+            },
         ]
         summary = {"decision_log": decision_log}
         logger.save_session(run_args={}, summary=summary, start_time="2024-01-01T00:00:00Z")
@@ -102,6 +111,7 @@ class TestLogManagerShallowCopy:
 # ---------------------------------------------------------------------------
 # factor_evaluator: single-pass trade_log produces correct counts
 # ---------------------------------------------------------------------------
+
 
 class TestFactorEvaluatorSinglePass:
     def _make_trade_log(self):
@@ -128,7 +138,9 @@ class TestFactorEvaluatorSinglePass:
         }
         result = evaluator.evaluate_session(session_data)
         signal_factor = next(f for f in result.factors if f.name == "signal")
-        direction_sf = next(sf for sf in signal_factor.sub_factors if sf.name == "direction_accuracy")
+        direction_sf = next(
+            sf for sf in signal_factor.sub_factors if sf.name == "direction_accuracy"
+        )
         # close_actions: close(+200), close(-100), reduce(+50), reverse_close(-30), close(0) → 5 total
         # winning (pnl>0): 200 and 50 → 2 wins
         assert direction_sf.details["total"] == 5
@@ -149,7 +161,9 @@ class TestFactorEvaluatorSinglePass:
         }
         result = evaluator.evaluate_session(session_data)
         signal_factor = next(f for f in result.factors if f.name == "signal")
-        direction_sf = next(sf for sf in signal_factor.sub_factors if sf.name == "direction_accuracy")
+        direction_sf = next(
+            sf for sf in signal_factor.sub_factors if sf.name == "direction_accuracy"
+        )
         assert direction_sf.details["total"] == 0
         # Default accuracy of 50 when no close trades
         assert direction_sf.score == pytest.approx(50.0)
@@ -158,6 +172,7 @@ class TestFactorEvaluatorSinglePass:
 # ---------------------------------------------------------------------------
 # data_manager: BacktestMarketData.append_prices uses O(1) slice
 # ---------------------------------------------------------------------------
+
 
 class TestBacktestMarketDataSlice:
     def _make_history(self, n: int = 10) -> pd.DataFrame:
