@@ -13,7 +13,7 @@ import pytest
 
 from mapeval.data_manager import BacktestMarketData
 from mapeval.order_executor import GuardedOrderExecutor, PaperExecutor
-from mapeval.order_models import Order, OrderSide, OrderType
+from mapeval.order_models import Order, OrderSide, OrderType, PositionInfo
 from mapeval.security import ReadOnlyGuard
 from mapeval.trading_engine import AccountState, FuturesPosition, RealTimeTradingEngine
 
@@ -104,6 +104,28 @@ class EmptyRemoteExecutor(RecordingExecutor):
         return 0.0
 
 
+class FailingExecutor(RecordingExecutor):
+    def submit_order(self, order):
+        raise RuntimeError("exchange unavailable")
+
+
+class ResidualPositionExecutor(RecordingExecutor):
+    def sync_positions(self):
+        return {
+            "BTCUSDT": PositionInfo(
+                symbol="BTCUSDT",
+                quantity=0.25,
+                entry_price=100.0,
+                mark_price=97.0,
+                unrealized_pnl=-0.75,
+                leverage=1.0,
+            )
+        }
+
+    def sync_balance(self) -> float:
+        return 1_000.0
+
+
 class StubAuditLogger:
     def __init__(self) -> None:
         self.entries = []
@@ -116,6 +138,17 @@ class StubAuditLogger:
                 "execution_mode": execution_mode,
             }
         )
+
+    def log_order(self, **entry) -> None:
+        self.entries.append(entry)
+
+
+class RecordingEventBus:
+    def __init__(self) -> None:
+        self.events = []
+
+    def publish(self, event) -> None:
+        self.events.append(event)
 
 
 class TestAccountState:
@@ -173,6 +206,34 @@ class TestAccountState:
 
 
 class TestRealTimeTradingEngine:
+    @pytest.mark.parametrize(("stop_enabled", "expected_stop_closes"), [(False, 0), (True, 1)])
+    def test_backtest_stop_loss_is_explicit_and_deterministic(
+        self, stop_enabled, expected_stop_closes
+    ):
+        index = pd.date_range("2024-01-01", periods=4, freq="min", name="Date")
+        market_data = BacktestMarketData(
+            pd.DataFrame({"BTCUSDT_Close": [100.0, 100.0, 97.0, 97.0]}, index=index),
+            symbols=["BTCUSDT"],
+            interval="1m",
+            lookback=1,
+        )
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=LongAgent(),
+            initial_capital=1_000.0,
+            max_leverage=1.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            stop_loss_enabled=stop_enabled,
+        )
+
+        summary = engine.run(duration_seconds=180.0, replay_interval_seconds=60.0)
+
+        stop_closes = [
+            trade for trade in summary["trade_log"] if trade.get("exit_reason") == "stop_loss"
+        ]
+        assert len(stop_closes) == expected_stop_closes
+
     def test_historical_replay_advances_once_per_bar_without_sleep(self, monkeypatch):
         index = pd.date_range("2024-01-01", periods=5, freq="min", name="Date")
         history = pd.DataFrame(
@@ -397,6 +458,117 @@ class TestLiquidationDetection:
 
 
 class TestExecutionSafety:
+    def _stop_engine(self, *, execution_mode="simulation", executor=None):
+        return RealTimeTradingEngine(
+            market_data=MockMarketData(["BTCUSDT"], {"BTCUSDT": 100.0}),
+            agent=MockAgent(),
+            initial_capital=1_000.0,
+            max_leverage=2.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            execution_mode=execution_mode,
+            order_executor=executor,
+            stop_loss_enabled=True,
+        )
+
+    def test_stop_lifecycle_preserves_protection_on_increase_and_reduce(self):
+        engine = self._stop_engine()
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") == pytest.approx(98.0)
+
+        engine.stop_loss_manager.update_trailing_stop("BTCUSDT", 105.0, "long", None)
+        tightened = engine.stop_loss_manager.get_stop_price("BTCUSDT")
+        engine._rebalance_position("BTCUSDT", 2.0, 100.0, timestamp)
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") == tightened
+
+    def test_stop_lifecycle_reinitializes_on_reverse_and_removes_on_close(self):
+        engine = self._stop_engine()
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+        engine._rebalance_position("BTCUSDT", -1.0, 100.0, timestamp)
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") == pytest.approx(102.0)
+
+        engine._rebalance_position("BTCUSDT", 0.0, 100.0, timestamp)
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") is None
+
+    def test_triggered_stop_closes_once_with_reduce_only_and_exit_reason(self):
+        executor = RecordingExecutor()
+        engine = self._stop_engine(execution_mode="paper", executor=executor)
+        engine.audit_logger = StubAuditLogger()
+        engine.event_bus = RecordingEventBus()
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+
+        first = engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp)
+        second = engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp)
+
+        assert first == ["BTCUSDT"]
+        assert second == []
+        assert len(executor.orders) == 2
+        assert executor.orders[-1].reduce_only is True
+        assert engine.trade_log[-1]["exit_reason"] == "stop_loss"
+        assert engine.account.positions == {}
+        assert engine.audit_logger.entries[-1]["action"] == "stop_loss_close"
+        assert [event.event_type.value for event in engine.event_bus.events].count(
+            "STOP_TRIGGERED"
+        ) == 1
+
+    def test_read_only_stop_alerts_then_closes_after_release(self):
+        executor = RecordingExecutor()
+        engine = self._stop_engine(execution_mode="paper", executor=executor)
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+        engine.read_only_guard = ReadOnlyGuard(enabled=True)
+
+        engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp)
+        engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp + pd.Timedelta(seconds=30))
+        assert len(executor.orders) == 1
+        assert "BTCUSDT" in engine.account.positions
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") is not None
+
+        engine.read_only_guard.disable()
+        engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp + pd.Timedelta(seconds=31))
+        assert len(executor.orders) == 2
+        assert engine.account.positions == {}
+
+    def test_stop_execution_failure_activates_kill_switch(self):
+        engine = self._stop_engine(execution_mode="paper", executor=FailingExecutor())
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine.account.positions["BTCUSDT"] = FuturesPosition("BTCUSDT", 1.0, 100.0, 1.0, timestamp)
+        engine.stop_loss_manager.calculate_initial_stop("BTCUSDT", 100.0, "long", None, timestamp)
+        engine.read_only_guard = ReadOnlyGuard(enabled=False)
+
+        engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp)
+
+        assert engine._kill_switch_active is True
+        assert engine.read_only_guard.is_read_only is True
+        assert "BTCUSDT" in engine.account.positions
+
+    def test_residual_position_after_stop_keeps_protection_and_activates_kill_switch(self):
+        executor = ResidualPositionExecutor()
+        engine = self._stop_engine(execution_mode="paper", executor=executor)
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine._rebalance_position("BTCUSDT", 1.0, 100.0, timestamp)
+        engine.read_only_guard = ReadOnlyGuard(enabled=False)
+
+        engine._process_stop_losses({"BTCUSDT": 97.0}, timestamp)
+
+        assert engine._kill_switch_active is True
+        assert engine.account.positions["BTCUSDT"].quantity == pytest.approx(0.25)
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") is not None
+
+    def test_reconciled_position_gets_stop_on_next_price_update(self):
+        engine = self._stop_engine()
+        timestamp = pd.Timestamp("2024-01-01", tz="UTC")
+        engine.account.positions["BTCUSDT"] = FuturesPosition("BTCUSDT", 1.0, 100.0, 1.0, timestamp)
+
+        engine._process_stop_losses({"BTCUSDT": 100.0}, timestamp)
+
+        assert engine.stop_loss_manager.get_stop_price("BTCUSDT") == pytest.approx(98.0)
+
     def test_plan_preview_never_places_orders_or_records_decision(self):
         market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
         executor = RecordingExecutor()

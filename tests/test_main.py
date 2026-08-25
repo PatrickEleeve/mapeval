@@ -13,8 +13,10 @@ import pytest
 from mapeval.main import (
     _compact_symbols,
     _confirm_live_execution,
+    _parse_args,
     _required_live_confirmation,
     _resolve_live_environment,
+    _resolve_stop_loss_enabled,
     _validate_mode_combination,
 )
 
@@ -57,3 +59,22 @@ class TestModeValidation:
 
     def test_backtest_accepts_simulation_execution(self):
         _validate_mode_combination("backtest", "simulation")
+
+
+class TestStopLossArguments:
+    def test_stop_loss_defaults_to_mode_resolution(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["mapeval"])
+        assert _parse_args().stop_loss is None
+
+    def test_stop_loss_can_be_explicitly_toggled(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["mapeval", "--stop-loss"])
+        assert _parse_args().stop_loss is True
+        monkeypatch.setattr(sys, "argv", ["mapeval", "--no-stop-loss"])
+        assert _parse_args().stop_loss is False
+
+    def test_mode_defaults_and_explicit_override(self):
+        assert _resolve_stop_loss_enabled("paper", None) is True
+        assert _resolve_stop_loss_enabled("live", None) is True
+        assert _resolve_stop_loss_enabled("simulation", None) is False
+        assert _resolve_stop_loss_enabled("paper", False) is False
+        assert _resolve_stop_loss_enabled("simulation", True) is True

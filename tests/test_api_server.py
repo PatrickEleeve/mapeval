@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import pandas as pd
 import pytest
 
 from mapeval.api_server import FASTAPI_AVAILABLE
@@ -19,6 +20,7 @@ if FASTAPI_AVAILABLE:
 
     from mapeval.api_server import create_app, set_api_token, set_engine
     from mapeval.security import ReadOnlyGuard
+    from mapeval.stop_loss_manager import StopLossManager
 
     class DummyAccount:
         balance = 1000.0
@@ -49,6 +51,11 @@ if FASTAPI_AVAILABLE:
             self.slippage = 0.0
             self.risk_manager = None
             self.preview_calls = []
+            self.stop_loss_enabled = True
+            self.stop_loss_manager = StopLossManager()
+            self.stop_loss_manager.calculate_initial_stop(
+                "BTCUSDT", 100.0, "long", None, pd.Timestamp.utcnow()
+            )
 
         def execute_trading_plan(self, payload, source: str, dry_run: bool):
             self.preview_calls.append((payload, source, dry_run))
@@ -119,6 +126,17 @@ if FASTAPI_AVAILABLE:
 
         invalid_action = client.post("/api/plans/preview", json={"actions": ["buy"]})
         assert invalid_action.status_code == 422
+
+    def test_risk_endpoint_includes_active_stops():
+        set_engine(DummyEngine())
+        set_api_token(None)
+
+        response = TestClient(create_app()).get("/api/risk")
+
+        assert response.status_code == 200
+        body = response.json()["stop_loss"]
+        assert body["enabled"] is True
+        assert body["stops"]["BTCUSDT"]["stop_price"] == 98.0
 
     def test_control_endpoints_require_token_when_configured():
         set_engine(DummyEngine())

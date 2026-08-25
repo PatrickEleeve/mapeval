@@ -216,7 +216,20 @@ def create_app() -> FastAPI:
         risk_report = {}
         if _engine.risk_manager is not None:
             risk_report = _engine.risk_manager.get_risk_report(_engine.account.equity)
-        return {"risk": risk_report}
+        stops = {}
+        stop_manager = getattr(_engine, "stop_loss_manager", None)
+        if stop_manager is not None:
+            stops = {
+                symbol: stop_manager.get_stop_info(symbol)
+                for symbol in stop_manager.get_all_stops()
+            }
+        return {
+            "risk": risk_report,
+            "stop_loss": {
+                "enabled": bool(getattr(_engine, "stop_loss_enabled", False)),
+                "stops": stops,
+            },
+        }
 
     # ── Configuration ───────────────────────────────────────────────
 
