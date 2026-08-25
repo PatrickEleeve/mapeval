@@ -16,7 +16,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -24,11 +24,12 @@ import pandas as pd
 @dataclass
 class FactorScore:
     """单个因子的评分结果"""
+
     name: str
     score: float  # 0-100 标准化评分
     weight: float  # 因子权重
-    details: Dict[str, Any] = field(default_factory=dict)
-    sub_factors: List["FactorScore"] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
+    sub_factors: list[FactorScore] = field(default_factory=list)
 
     @property
     def weighted_score(self) -> float:
@@ -38,14 +39,15 @@ class FactorScore:
 @dataclass
 class BenchmarkResult:
     """完整的Benchmark评估结果"""
+
     session_id: str
     provider: str
     total_score: float
-    factors: List[FactorScore]
+    factors: list[FactorScore]
     market_regime: str  # bull/bear/sideways/volatile
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
             "provider": self.provider,
@@ -59,16 +61,15 @@ class BenchmarkResult:
                     "weighted_score": round(f.weighted_score, 2),
                     "details": f.details,
                     "sub_factors": [
-                        {"name": sf.name, "score": round(sf.score, 2)}
-                        for sf in f.sub_factors
-                    ]
+                        {"name": sf.name, "score": round(sf.score, 2)} for sf in f.sub_factors
+                    ],
                 }
                 for f in self.factors
             ],
-            "metadata": self.metadata
+            "metadata": self.metadata,
         }
 
-    def to_leaderboard_row(self) -> Dict[str, Any]:
+    def to_leaderboard_row(self) -> dict[str, Any]:
         """生成排行榜单行数据"""
         row = {
             "provider": self.provider,
@@ -83,17 +84,17 @@ class BenchmarkResult:
 class FactorEvaluator:
     """因子化评估器 - 核心评估引擎"""
 
-    # 因子权重配置 (总和=1.0)
-    DEFAULT_WEIGHTS = {
-        "signal": 0.25,      # 信号准确性
-        "risk": 0.20,        # 风险控制
+    # Factor weights sum to 1.0.
+    DEFAULT_WEIGHTS: ClassVar[dict[str, float]] = {
+        "signal": 0.25,  # 信号准确性
+        "risk": 0.20,  # 风险控制
         "efficiency": 0.15,  # 成本效率
-        "consistency": 0.15, # 决策一致性
-        "adaptability": 0.15,# 市场适应性
-        "reasoning": 0.10,   # 推理质量
+        "consistency": 0.15,  # 决策一致性
+        "adaptability": 0.15,  # 市场适应性
+        "reasoning": 0.10,  # 推理质量
     }
 
-    def __init__(self, weights: Optional[Dict[str, float]] = None):
+    def __init__(self, weights: dict[str, float] | None = None):
         self.weights = weights or self.DEFAULT_WEIGHTS
         # 标准化权重
         total = sum(self.weights.values())
@@ -101,8 +102,8 @@ class FactorEvaluator:
 
     def evaluate_session(
         self,
-        session_data: Dict[str, Any],
-        price_data: Optional[pd.DataFrame] = None,
+        session_data: dict[str, Any],
+        price_data: pd.DataFrame | None = None,
     ) -> BenchmarkResult:
         """评估单个交易session"""
 
@@ -127,21 +128,15 @@ class FactorEvaluator:
         factors.append(signal_score)
 
         # 2. 风险因子
-        risk_score = self._evaluate_risk_factor(
-            equity_history, trade_log, parameters
-        )
+        risk_score = self._evaluate_risk_factor(equity_history, trade_log, parameters)
         factors.append(risk_score)
 
         # 3. 效率因子
-        efficiency_score = self._evaluate_efficiency_factor(
-            trade_log, equity_history, parameters
-        )
+        efficiency_score = self._evaluate_efficiency_factor(trade_log, equity_history, parameters)
         factors.append(efficiency_score)
 
         # 4. 一致性因子
-        consistency_score = self._evaluate_consistency_factor(
-            decision_log, trade_log
-        )
+        consistency_score = self._evaluate_consistency_factor(decision_log, trade_log)
         factors.append(consistency_score)
 
         # 5. 适应性因子
@@ -168,13 +163,11 @@ class FactorEvaluator:
                 "symbols_count": len(parameters.get("symbols", [])),
                 "initial_capital": parameters.get("initial_capital"),
                 "max_leverage": parameters.get("max_leverage"),
-            }
+            },
         )
 
     def _detect_market_regime(
-        self,
-        equity_history: List[Dict],
-        price_data: Optional[pd.DataFrame] = None
+        self, equity_history: list[dict], price_data: pd.DataFrame | None = None
     ) -> str:
         """检测市场状态: bull/bear/sideways/volatile"""
         if not equity_history or len(equity_history) < 10:
@@ -196,19 +189,18 @@ class FactorEvaluator:
         # 基于收益和波动率判断市场状态
         if volatility > 0.1:  # 高波动
             return "volatile"
-        elif total_return > 0.02:  # 上涨>2%
+        if total_return > 0.02:  # 上涨>2%
             return "bull"
-        elif total_return < -0.02:  # 下跌>2%
+        if total_return < -0.02:  # 下跌>2%
             return "bear"
-        else:
-            return "sideways"
+        return "sideways"
 
     def _evaluate_signal_factor(
         self,
-        decision_log: List[Dict],
-        trade_log: List[Dict],
-        equity_history: List[Dict],
-        price_data: Optional[pd.DataFrame] = None
+        decision_log: list[dict],
+        trade_log: list[dict],
+        equity_history: list[dict],
+        price_data: pd.DataFrame | None = None,
     ) -> FactorScore:
         """
         评估信号因子 - 预测方向的准确性
@@ -231,15 +223,16 @@ class FactorEvaluator:
                     winning_count += 1
 
         direction_accuracy = (winning_count / total_trades * 100) if total_trades > 0 else 50
-        sub_factors.append(FactorScore(
-            name="direction_accuracy",
-            score=direction_accuracy,
-            weight=0.5,
-            details={"winning": winning_count, "total": total_trades}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="direction_accuracy",
+                score=direction_accuracy,
+                weight=0.5,
+                details={"winning": winning_count, "total": total_trades},
+            )
+        )
 
         # 2. 信号质量 - 基于决策置信度与结果的相关性
-        confident_correct = 0
         confident_total = 0
         for decision in decision_log:
             if decision.get("action") == "REBALANCE":
@@ -248,22 +241,23 @@ class FactorEvaluator:
                 # 简化处理：如果applied_exposure方向与后续equity变化一致则算正确
 
         signal_quality = 50.0  # 默认中等
-        if confident_total > 0:
+        if confident_total > 0 and equity_history and len(equity_history) > 1:
             # 基于equity变化趋势评估
-            if equity_history and len(equity_history) > 1:
-                start_eq = equity_history[0].get("equity", 100000)
-                end_eq = equity_history[-1].get("equity", 100000)
-                if end_eq > start_eq:
-                    signal_quality = min(80, 50 + (end_eq / start_eq - 1) * 500)
-                else:
-                    signal_quality = max(20, 50 + (end_eq / start_eq - 1) * 500)
+            start_eq = equity_history[0].get("equity", 100000)
+            end_eq = equity_history[-1].get("equity", 100000)
+            if end_eq > start_eq:
+                signal_quality = min(80, 50 + (end_eq / start_eq - 1) * 500)
+            else:
+                signal_quality = max(20, 50 + (end_eq / start_eq - 1) * 500)
 
-        sub_factors.append(FactorScore(
-            name="signal_quality",
-            score=signal_quality,
-            weight=0.5,
-            details={"decisions_count": confident_total}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="signal_quality",
+                score=signal_quality,
+                weight=0.5,
+                details={"decisions_count": confident_total},
+            )
+        )
 
         # 综合信号因子得分
         total_score = sum(sf.score * sf.weight for sf in sub_factors)
@@ -276,14 +270,11 @@ class FactorEvaluator:
             details={
                 "win_rate": direction_accuracy,
                 "total_decisions": len(decision_log),
-            }
+            },
         )
 
     def _evaluate_risk_factor(
-        self,
-        equity_history: List[Dict],
-        trade_log: List[Dict],
-        parameters: Dict[str, Any]
+        self, equity_history: list[dict], trade_log: list[dict], parameters: dict[str, Any]
     ) -> FactorScore:
         """
         评估风险因子 - 风险控制能力
@@ -307,37 +298,38 @@ class FactorEvaluator:
 
         # 回撤<5%得100分，>50%得0分，线性插值
         drawdown_score = max(0, 100 - max_drawdown * 200)
-        sub_factors.append(FactorScore(
-            name="max_drawdown_score",
-            score=drawdown_score,
-            weight=0.4,
-            details={"max_drawdown_pct": round(max_drawdown * 100, 2)}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="max_drawdown_score",
+                score=drawdown_score,
+                weight=0.4,
+                details={"max_drawdown_pct": round(max_drawdown * 100, 2)},
+            )
+        )
 
         # 2. 杠杆纪律 - 是否超出限制
-        max_leverage = parameters.get("max_leverage", 30)
+        parameters.get("max_leverage", 30)
         leverage_violations = 0
-        for trade in trade_log:
+        for _trade in trade_log:
             # 检查是否有engine_notes说明超出限制
             pass  # 需要从decision_log检查
 
         leverage_score = 100 - leverage_violations * 10
-        sub_factors.append(FactorScore(
-            name="leverage_discipline",
-            score=max(0, leverage_score),
-            weight=0.3,
-            details={"violations": leverage_violations}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="leverage_discipline",
+                score=max(0, leverage_score),
+                weight=0.3,
+                details={"violations": leverage_violations},
+            )
+        )
 
         # 3. 仓位管理 - 基于波动率调整仓位
         # 评估是否在高波动时降低仓位
         position_score = 70  # 默认中等偏上
-        sub_factors.append(FactorScore(
-            name="position_sizing",
-            score=position_score,
-            weight=0.3,
-            details={}
-        ))
+        sub_factors.append(
+            FactorScore(name="position_sizing", score=position_score, weight=0.3, details={})
+        )
 
         total_score = sum(sf.score * sf.weight for sf in sub_factors)
 
@@ -348,14 +340,11 @@ class FactorEvaluator:
             sub_factors=sub_factors,
             details={
                 "max_drawdown_pct": round(max_drawdown * 100, 2),
-            }
+            },
         )
 
     def _evaluate_efficiency_factor(
-        self,
-        trade_log: List[Dict],
-        equity_history: List[Dict],
-        parameters: Dict[str, Any]
+        self, trade_log: list[dict], equity_history: list[dict], parameters: dict[str, Any]
     ) -> FactorScore:
         """
         评估效率因子 - 成本效率
@@ -383,15 +372,17 @@ class FactorEvaluator:
         else:
             cost_score = 50
 
-        sub_factors.append(FactorScore(
-            name="cost_efficiency",
-            score=cost_score,
-            weight=0.4,
-            details={
-                "total_costs": round(total_costs, 2),
-                "total_pnl": round(total_pnl, 2),
-            }
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="cost_efficiency",
+                score=cost_score,
+                weight=0.4,
+                details={
+                    "total_costs": round(total_costs, 2),
+                    "total_pnl": round(total_pnl, 2),
+                },
+            )
+        )
 
         # 2. 换手率效率
         num_trades = len(trade_log)
@@ -406,20 +397,24 @@ class FactorEvaluator:
         else:
             turnover_score = max(30, 100 - (trades_per_hour - 5) * 10)
 
-        sub_factors.append(FactorScore(
-            name="turnover_efficiency",
-            score=turnover_score,
-            weight=0.3,
-            details={"trades_per_hour": round(trades_per_hour, 2)}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="turnover_efficiency",
+                score=turnover_score,
+                weight=0.3,
+                details={"trades_per_hour": round(trades_per_hour, 2)},
+            )
+        )
 
         # 3. 持仓周期
         hold_score = 70  # 默认
-        sub_factors.append(FactorScore(
-            name="holding_period",
-            score=hold_score,
-            weight=0.3,
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="holding_period",
+                score=hold_score,
+                weight=0.3,
+            )
+        )
 
         total_score = sum(sf.score * sf.weight for sf in sub_factors)
 
@@ -431,13 +426,11 @@ class FactorEvaluator:
             details={
                 "total_trades": num_trades,
                 "total_costs": round(total_costs, 2),
-            }
+            },
         )
 
     def _evaluate_consistency_factor(
-        self,
-        decision_log: List[Dict],
-        trade_log: List[Dict]
+        self, decision_log: list[dict], trade_log: list[dict]
     ) -> FactorScore:
         """
         评估一致性因子 - 决策稳定性
@@ -454,7 +447,7 @@ class FactorEvaluator:
         total_decisions = len(decision_log)
 
         hold_ratio = hold_count / total_decisions if total_decisions > 0 else 0.5
-        # HOLD比例在30%-80%之间最佳
+        # A HOLD ratio between 30% and 80% is considered optimal.
         if 0.3 <= hold_ratio <= 0.8:
             action_score = 100
         elif hold_ratio < 0.3:
@@ -462,17 +455,19 @@ class FactorEvaluator:
         else:
             action_score = 100 - (hold_ratio - 0.8) * 200
 
-        sub_factors.append(FactorScore(
-            name="action_consistency",
-            score=max(0, action_score),
-            weight=0.4,
-            details={"hold_ratio": round(hold_ratio, 2)}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="action_consistency",
+                score=max(0, action_score),
+                weight=0.4,
+                details={"hold_ratio": round(hold_ratio, 2)},
+            )
+        )
 
         # 2. 仓位稳定性 - 连续决策间仓位变化的标准差
         exposure_changes = []
         for i in range(1, len(decision_log)):
-            prev = decision_log[i-1].get("applied_exposure", {})
+            prev = decision_log[i - 1].get("applied_exposure", {})
             curr = decision_log[i].get("applied_exposure", {})
             if prev and curr:
                 total_change = sum(
@@ -488,20 +483,24 @@ class FactorEvaluator:
         else:
             stability_score = 70
 
-        sub_factors.append(FactorScore(
-            name="exposure_stability",
-            score=stability_score,
-            weight=0.3,
-            details={"avg_exposure_change": round(avg_change if exposure_changes else 0, 2)}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="exposure_stability",
+                score=stability_score,
+                weight=0.3,
+                details={"avg_exposure_change": round(avg_change if exposure_changes else 0, 2)},
+            )
+        )
 
         # 3. 推理一致性 - 检查推理是否前后矛盾
         reasoning_score = 70  # 默认，需要NLP分析
-        sub_factors.append(FactorScore(
-            name="reasoning_consistency",
-            score=reasoning_score,
-            weight=0.3,
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="reasoning_consistency",
+                score=reasoning_score,
+                weight=0.3,
+            )
+        )
 
         total_score = sum(sf.score * sf.weight for sf in sub_factors)
 
@@ -513,14 +512,11 @@ class FactorEvaluator:
             details={
                 "total_decisions": total_decisions,
                 "hold_count": hold_count,
-            }
+            },
         )
 
     def _evaluate_adaptability_factor(
-        self,
-        decision_log: List[Dict],
-        equity_history: List[Dict],
-        market_regime: str
+        self, decision_log: list[dict], equity_history: list[dict], market_regime: str
     ) -> FactorScore:
         """
         评估适应性因子 - 市场环境适应能力
@@ -547,33 +543,38 @@ class FactorEvaluator:
                 adaptation_score = min(100, 70 + (5 + pnl_pct) * 3)
             elif market_regime == "sideways" and abs(pnl_pct) < 2:
                 adaptation_score = 80
-            elif market_regime == "volatile":
+            elif market_regime == "volatile" and pnl_pct > -10:
                 # 高波动时控制损失
-                if pnl_pct > -10:
-                    adaptation_score = 70 + (10 + pnl_pct)
+                adaptation_score = 70 + (10 + pnl_pct)
 
-        sub_factors.append(FactorScore(
-            name="regime_adaptation",
-            score=adaptation_score,
-            weight=0.4,
-            details={"market_regime": market_regime}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="regime_adaptation",
+                score=adaptation_score,
+                weight=0.4,
+                details={"market_regime": market_regime},
+            )
+        )
 
         # 2. 波动率响应
         vol_response_score = 65
-        sub_factors.append(FactorScore(
-            name="volatility_response",
-            score=vol_response_score,
-            weight=0.3,
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="volatility_response",
+                score=vol_response_score,
+                weight=0.3,
+            )
+        )
 
         # 3. 趋势跟随
         trend_score = 65
-        sub_factors.append(FactorScore(
-            name="trend_following",
-            score=trend_score,
-            weight=0.3,
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="trend_following",
+                score=trend_score,
+                weight=0.3,
+            )
+        )
 
         total_score = sum(sf.score * sf.weight for sf in sub_factors)
 
@@ -582,13 +583,10 @@ class FactorEvaluator:
             score=total_score,
             weight=self.weights["adaptability"],
             sub_factors=sub_factors,
-            details={"market_regime": market_regime}
+            details={"market_regime": market_regime},
         )
 
-    def _evaluate_reasoning_factor(
-        self,
-        decision_log: List[Dict]
-    ) -> FactorScore:
+    def _evaluate_reasoning_factor(self, decision_log: list[dict]) -> FactorScore:
         """
         评估推理因子 - 推理质量
 
@@ -621,31 +619,37 @@ class FactorEvaluator:
         else:
             completeness_score = max(50, 100 - (avg_length - 200) * 0.1)
 
-        sub_factors.append(FactorScore(
-            name="reasoning_completeness",
-            score=completeness_score,
-            weight=0.4,
-            details={"avg_reasoning_length": round(avg_length, 1)}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="reasoning_completeness",
+                score=completeness_score,
+                weight=0.4,
+                details={"avg_reasoning_length": round(avg_length, 1)},
+            )
+        )
 
         # 2. 指标使用合理性
         indicator_ratio = has_indicator_mention / len(decision_log) if decision_log else 0
         indicator_score = indicator_ratio * 100
 
-        sub_factors.append(FactorScore(
-            name="indicator_usage",
-            score=indicator_score,
-            weight=0.3,
-            details={"indicator_mention_ratio": round(indicator_ratio, 2)}
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="indicator_usage",
+                score=indicator_score,
+                weight=0.3,
+                details={"indicator_mention_ratio": round(indicator_ratio, 2)},
+            )
+        )
 
         # 3. 逻辑连贯性 (需要更复杂的NLP，暂用默认值)
         coherence_score = 65
-        sub_factors.append(FactorScore(
-            name="logic_coherence",
-            score=coherence_score,
-            weight=0.3,
-        ))
+        sub_factors.append(
+            FactorScore(
+                name="logic_coherence",
+                score=coherence_score,
+                weight=0.3,
+            )
+        )
 
         total_score = sum(sf.score * sf.weight for sf in sub_factors)
 
@@ -656,7 +660,7 @@ class FactorEvaluator:
             sub_factors=sub_factors,
             details={
                 "total_reasonings": len(reasoning_lengths),
-            }
+            },
         )
 
 
@@ -667,7 +671,7 @@ class ScenarioTestSuite:
     用于在不同市场条件下系统性测试LLM
     """
 
-    SCENARIOS = {
+    SCENARIOS: ClassVar[dict[str, dict[str, Any]]] = {
         "bull_strong": {
             "name": "强势牛市",
             "description": "价格持续上涨，波动率低",
@@ -701,7 +705,9 @@ class ScenarioTestSuite:
     }
 
     @classmethod
-    def generate_scenario_data(cls, scenario_name: str, duration_hours: float = 1.0) -> pd.DataFrame:
+    def generate_scenario_data(
+        cls, scenario_name: str, duration_hours: float = 1.0
+    ) -> pd.DataFrame:
         """生成指定场景的模拟价格数据"""
         import numpy as np
 
@@ -730,7 +736,7 @@ class ScenarioTestSuite:
         elif scenario_name == "sideways":
             # 横盘 ±2%
             noise = np.random.normal(0, 0.003, n_points)
-            mean_revert = np.sin(np.linspace(0, 4*np.pi, n_points)) * 0.01
+            mean_revert = np.sin(np.linspace(0, 4 * np.pi, n_points)) * 0.01
             prices = base_price * (1 + mean_revert + noise)
 
         elif scenario_name == "high_volatility":
@@ -749,16 +755,18 @@ class ScenarioTestSuite:
         else:
             prices = np.full(n_points, base_price)
 
-        return pd.DataFrame({
-            "timestamp": timestamps,
-            "BTCUSDT": prices,
-        })
+        return pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "BTCUSDT": prices,
+            }
+        )
 
 
 class BenchmarkReport:
     """生成标准化的Benchmark报告"""
 
-    def __init__(self, results: List[BenchmarkResult]):
+    def __init__(self, results: list[BenchmarkResult]):
         self.results = results
 
     def generate_leaderboard(self) -> pd.DataFrame:
@@ -767,11 +775,11 @@ class BenchmarkReport:
         df = pd.DataFrame(rows)
         return df.sort_values("total_score", ascending=False).reset_index(drop=True)
 
-    def generate_radar_chart_data(self, result: BenchmarkResult) -> Dict[str, float]:
+    def generate_radar_chart_data(self, result: BenchmarkResult) -> dict[str, float]:
         """生成雷达图数据"""
         return {f.name: f.score for f in result.factors}
 
-    def generate_comparison_report(self) -> Dict[str, Any]:
+    def generate_comparison_report(self) -> dict[str, Any]:
         """生成对比报告"""
         if not self.results:
             return {}
@@ -789,8 +797,7 @@ class BenchmarkReport:
             factor_avgs = {}
             for factor_name in self.results[0].factors[0].name if self.results else []:
                 factor_avgs[factor_name] = sum(
-                    next((f.score for f in r.factors if f.name == factor_name), 0)
-                    for r in results
+                    next((f.score for f in r.factors if f.name == factor_name), 0) for r in results
                 ) / len(results)
 
             comparison[provider] = {
@@ -839,7 +846,9 @@ class BenchmarkReport:
             lines.append("| Factor | Score | Weight | Weighted |")
             lines.append("|--------|-------|--------|----------|")
             for f in result.factors:
-                lines.append(f"| {f.name} | {f.score:.1f} | {f.weight:.2f} | {f.weighted_score:.2f} |")
+                lines.append(
+                    f"| {f.name} | {f.score:.1f} | {f.weight:.2f} | {f.weighted_score:.2f} |"
+                )
             lines.append("\n")
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -849,14 +858,14 @@ class BenchmarkReport:
 # 便捷函数
 def evaluate_session_file(filepath: str) -> BenchmarkResult:
     """从JSON文件评估session"""
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
     evaluator = FactorEvaluator()
     return evaluator.evaluate_session(data)
 
 
-def evaluate_all_sessions(log_dir: str = "logs") -> List[BenchmarkResult]:
+def evaluate_all_sessions(log_dir: str = "logs") -> list[BenchmarkResult]:
     """评估目录下所有session"""
     log_path = Path(log_dir)
     results = []

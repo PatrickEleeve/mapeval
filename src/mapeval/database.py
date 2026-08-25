@@ -9,16 +9,18 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, Optional
+
 
 logger = logging.getLogger(__name__)
 
 try:
     from sqlalchemy import create_engine, event, text
     from sqlalchemy.orm import Session, sessionmaker
-    from mapeval.db_models import Base, SQLALCHEMY_AVAILABLE
+
+    from mapeval.db_models import SQLALCHEMY_AVAILABLE, Base
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
 
@@ -38,9 +40,11 @@ class DatabaseManager:
             session.commit()
     """
 
-    def __init__(self, url: Optional[str] = None) -> None:
+    def __init__(self, url: str | None = None) -> None:
         if not SQLALCHEMY_AVAILABLE:
-            raise RuntimeError("sqlalchemy is required for database support. Install with: pip install sqlalchemy>=2.0")
+            raise RuntimeError(
+                "sqlalchemy is required for database support. Install with: pip install sqlalchemy>=2.0"
+            )
 
         if url is None:
             url = os.getenv("MAPEVAL_DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH}")
@@ -63,6 +67,7 @@ class DatabaseManager:
 
         # Enable WAL mode for SQLite for better concurrent read performance
         if self._is_sqlite:
+
             @event.listens_for(self._engine, "connect")
             def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor = dbapi_connection.cursor()

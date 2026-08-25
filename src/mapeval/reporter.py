@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 
@@ -14,11 +14,11 @@ class RealTimeReporter:
     """Collect live statistics, surface warnings, and produce final summaries."""
 
     print_interval_seconds: float = 60.0
-    _last_print_ts: Optional[pd.Timestamp] = field(default=None, init=False)
-    ticks: List[Dict[str, Any]] = field(default_factory=list, init=False)
-    warnings: List[Dict[str, str]] = field(default_factory=list, init=False)
+    _last_print_ts: pd.Timestamp | None = field(default=None, init=False)
+    ticks: list[dict[str, Any]] = field(default_factory=list, init=False)
+    warnings: list[dict[str, str]] = field(default_factory=list, init=False)
 
-    def record_tick(self, timestamp: pd.Timestamp, account: Any, prices: Dict[str, float]) -> None:
+    def record_tick(self, timestamp: pd.Timestamp, account: Any, prices: dict[str, float]) -> None:
         snapshot = {
             "timestamp": timestamp,
             "equity": float(account.equity),
@@ -49,9 +49,9 @@ class RealTimeReporter:
 
     def finalize(
         self,
-        equity_history: List[Dict[str, Any]],
-        trade_log: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        equity_history: list[dict[str, Any]],
+        trade_log: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         if not equity_history:
             report = {
                 "warnings": self.warnings,
@@ -91,9 +91,13 @@ class RealTimeReporter:
 
         equity_returns = equity_series.pct_change().dropna()
         if not equity_returns.empty and equity_returns.std() > 0:
-            avg_interval = (df.index[-1] - df.index[0]).total_seconds() / len(df) if len(df) > 1 else 60
+            avg_interval = (
+                (df.index[-1] - df.index[0]).total_seconds() / len(df) if len(df) > 1 else 60
+            )
             periods_per_year = (365 * 24 * 60 * 60) / avg_interval
-            sharpe_ratio = (equity_returns.mean() / equity_returns.std()) * math.sqrt(periods_per_year)
+            sharpe_ratio = (equity_returns.mean() / equity_returns.std()) * math.sqrt(
+                periods_per_year
+            )
         else:
             sharpe_ratio = 0.0
 
@@ -101,7 +105,9 @@ class RealTimeReporter:
         if start_equity > 0 and duration_seconds >= 24 * 60 * 60:
             growth = end_equity / start_equity
             try:
-                annualized_return = math.exp(math.log(growth) * (seconds_per_year / duration_seconds)) - 1.0
+                annualized_return = (
+                    math.exp(math.log(growth) * (seconds_per_year / duration_seconds)) - 1.0
+                )
             except ValueError:
                 annualized_return = None
         else:

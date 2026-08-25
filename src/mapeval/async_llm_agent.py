@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
 from mapeval.exposure_utils import compute_fallback_exposures, sanitize_exposures
+
 
 try:
     from openai import AsyncOpenAI
@@ -41,21 +42,21 @@ _SYSTEM_PROMPT_TEMPLATE = (
 @dataclass
 class AsyncLLMAgent:
     """Async version of LLMAgent for parallel processing."""
-    
+
     api_key: str
-    config: Dict[str, Any]
-    symbols: Optional[List[str]] = None
+    config: dict[str, Any]
+    symbols: list[str] | None = None
     max_leverage: float = 50.0
     per_symbol_max_exposure: float = 50.0
     max_exposure_delta: float = 50.0
     provider: str = "openai"
-    base_url: Optional[str] = None
-    _client: Optional[Any] = field(init=False, default=None)
+    base_url: str | None = None
+    _client: Any | None = field(init=False, default=None)
     _system_prompt: str = field(init=False)
-    _last_exposures: Dict[str, float] = field(init=False, default_factory=dict)
+    _last_exposures: dict[str, float] = field(init=False, default_factory=dict)
     last_reasoning: str = field(init=False, default="")
-    last_sanitization_notes: List[str] = field(init=False, default_factory=list)
-    
+    last_sanitization_notes: list[str] = field(init=False, default_factory=list)
+
     def __post_init__(self) -> None:
         self.symbols = list(self.symbols) if self.symbols else ["BTCUSDT", "ETHUSDT"]
         self.max_leverage = max(0.0, float(self.max_leverage))
@@ -63,27 +64,27 @@ class AsyncLLMAgent:
         if self.max_leverage > 0.0:
             self.per_symbol_max_exposure = min(self.per_symbol_max_exposure, self.max_leverage)
         self.max_exposure_delta = float(self.max_exposure_delta or self.per_symbol_max_exposure)
-        self._last_exposures = {symbol: 0.0 for symbol in self.symbols}
+        self._last_exposures = dict.fromkeys(self.symbols, 0.0)
         self._system_prompt = self._build_system_prompt()
-        
+
         if AsyncOpenAI is None:
             return
-        
+
         api_key = (self.api_key or "").strip()
         if not api_key or api_key.startswith("YOUR_"):
             return
-        
-        client_kwargs: Dict[str, Any] = {"api_key": api_key}
+
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
         elif self.provider == "deepseek":
             client_kwargs["base_url"] = self.config.get("base_url", "https://api.deepseek.com")
-        
+
         try:
             self._client = AsyncOpenAI(**client_kwargs)
         except Exception:
             self._client = None
-    
+
     def _build_system_prompt(self) -> str:
         symbol_list = ", ".join(self.symbols)
         return _SYSTEM_PROMPT_TEMPLATE.format(
@@ -92,20 +93,20 @@ class AsyncLLMAgent:
             per_symbol_cap=self.per_symbol_max_exposure,
             max_delta=self.max_exposure_delta,
         )
-    
+
     async def generate_trading_signal_async(
         self,
         current_time: pd.Timestamp,
         market_data_slice: pd.DataFrame,
         available_tools: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         current_time = pd.to_datetime(current_time)
         if isinstance(current_time, pd.Timestamp) and current_time.tzinfo is not None:
             current_time = current_time.tz_convert(None)
-        
+
         formatted_data = market_data_slice.tail(60).to_string(index=False)
-        
-        funding_lines: List[str] = []
+
+        funding_lines: list[str] = []
         try:
             get_fr = getattr(available_tools, "get_funding_rate", None)
             if callable(get_fr):
@@ -115,12 +116,14 @@ class AsyncLLMAgent:
                         funding_lines.append(f"{sym}:{fr:.6f}")
         except Exception:
             pass
-        
+
         funding_hint = ", ".join(funding_lines) if funding_lines else "N/A"
         timestamp_utc = (
-            current_time.tz_localize("UTC") if current_time.tzinfo is None else current_time.tz_convert("UTC")
+            current_time.tz_localize("UTC")
+            if current_time.tzinfo is None
+            else current_time.tz_convert("UTC")
         )
-        
+
         user_prompt = (
             f"Current timestamp (UTC): {timestamp_utc}\n"
             f"Tradable contracts: {', '.join(self.symbols)}\n"
@@ -133,10 +136,10 @@ class AsyncLLMAgent:
             f"- Max change versus previous step: +/-{self.max_exposure_delta:g}x per symbol\n"
             "Return an exposure for every tracked symbol (0.0 when flat)."
         )
-        
+
         if self._client is not None:
             try:
-                request_kwargs: Dict[str, Any] = {
+                request_kwargs: dict[str, Any] = {
                     "model": self.config.get("model_name", "gpt-4-turbo"),
                     "temperature": self.config.get("temperature", 0.2),
                     "messages": [
@@ -146,7 +149,7 @@ class AsyncLLMAgent:
                 }
                 if self.config.get("supports_json_response_format", False):
                     request_kwargs["response_format"] = {"type": "json_object"}
-                
+
                 response = await self._client.chat.completions.create(**request_kwargs)
                 content = response.choices[0].message.content if response.choices else ""
                 parsed = json.loads(content)
@@ -157,16 +160,16 @@ class AsyncLLMAgent:
                     return sanitized
             except Exception as e:
                 self.last_reasoning = f"Async LLM error: {e}"
-        
+
         return await self._fallback_exposures_async(current_time, available_tools)
-    
+
     async def generate_batch_signals_async(
         self,
-        symbol_groups: List[List[str]],
+        symbol_groups: list[list[str]],
         current_time: pd.Timestamp,
         market_data_slice: pd.DataFrame,
         available_tools: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         tasks = []
         for symbols in symbol_groups:
             agent_copy = AsyncLLMAgent(
@@ -183,17 +186,17 @@ class AsyncLLMAgent:
                 current_time, market_data_slice, available_tools
             )
             tasks.append(task)
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        combined: Dict[str, float] = {}
+
+        combined: dict[str, float] = {}
         for result in results:
             if isinstance(result, dict):
                 combined.update(result)
-        
+
         return combined
-    
-    def _sanitize_exposures(self, exposures: Dict[str, Any]) -> Optional[Dict[str, float]]:
+
+    def _sanitize_exposures(self, exposures: dict[str, Any]) -> dict[str, float] | None:
         self.last_sanitization_notes = []
         result = sanitize_exposures(
             exposures=exposures,
@@ -207,12 +210,12 @@ class AsyncLLMAgent:
         if result is not None:
             self._last_exposures = dict(result)
         return result
-    
+
     async def _fallback_exposures_async(
         self,
         current_time: pd.Timestamp,
         available_tools: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         raw_exposures = compute_fallback_exposures(
             symbols=self.symbols,
             current_time=current_time,
@@ -222,7 +225,7 @@ class AsyncLLMAgent:
 
         sanitized = self._sanitize_exposures(raw_exposures)
         if sanitized is None:
-            sanitized = {symbol: 0.0 for symbol in self.symbols}
+            sanitized = dict.fromkeys(self.symbols, 0.0)
             self._last_exposures = dict(sanitized)
 
         self.last_reasoning = "Async fallback: momentum-based heuristic"
@@ -230,11 +233,11 @@ class AsyncLLMAgent:
 
 
 async def run_parallel_signals(
-    agents: List[AsyncLLMAgent],
+    agents: list[AsyncLLMAgent],
     current_time: pd.Timestamp,
     market_data_slice: pd.DataFrame,
     available_tools: Any,
-) -> List[Dict[str, float]]:
+) -> list[dict[str, float]]:
     tasks = [
         agent.generate_trading_signal_async(current_time, market_data_slice, available_tools)
         for agent in agents

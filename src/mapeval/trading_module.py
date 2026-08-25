@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 
 class TradingModule:
@@ -11,13 +11,15 @@ class TradingModule:
     def __init__(self, engine) -> None:
         self.engine = engine
 
-    def submit_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+    def submit_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
         """Submit a structured trading plan to the underlying trading engine."""
         if not isinstance(plan, dict):
             raise TypeError("Plan payload must be a dictionary.")
         return self.engine.execute_trading_plan(plan)
 
-    def submit_exposures(self, exposure_map: Dict[str, float], reasoning: str = "") -> Dict[str, Any]:
+    def submit_exposures(
+        self, exposure_map: dict[str, float], reasoning: str = ""
+    ) -> dict[str, Any]:
         """Convenience wrapper that builds a trading plan from a pure exposure map."""
         if not isinstance(exposure_map, dict):
             raise TypeError("Exposure map must be a dictionary.")

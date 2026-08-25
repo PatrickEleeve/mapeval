@@ -70,7 +70,10 @@ class TestRealTimeMarketData:
         market.append_prices({"BTCUSDT": 103.0}, timestamp=index[-1] + pd.Timedelta(minutes=1))
 
         assert len(market.price_history) == 3
-        assert list(market.price_history.index) == list(index[1:]) + [index[-1] + pd.Timedelta(minutes=1)]
+        assert list(market.price_history.index) == [
+            *list(index[1:]),
+            index[-1] + pd.Timedelta(minutes=1),
+        ]
         assert market.price_history.iloc[-1]["BTCUSDT_Close"] == 103.0
         assert market.price_history.iloc[-1]["ETHUSDT_Close"] == 202.0
         assert market.latest_prices() == {"BTCUSDT": 103.0, "ETHUSDT": 202.0}

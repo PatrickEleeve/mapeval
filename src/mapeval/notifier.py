@@ -6,11 +6,11 @@ Integrates with the event bus to automatically notify on key trading events.
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class Notifier(ABC):
         level: str,
         title: str,
         message: str,
-        data: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
     ) -> bool:
         """Send a notification. Returns True if delivered successfully."""
         ...
@@ -38,7 +38,9 @@ class Notifier(ABC):
 class LogNotifier(Notifier):
     """Fallback notifier that logs to Python logging."""
 
-    def send_alert(self, level: str, title: str, message: str, data: Optional[Dict[str, Any]] = None) -> bool:
+    def send_alert(
+        self, level: str, title: str, message: str, data: dict[str, Any] | None = None
+    ) -> bool:
         log_level = getattr(logging, level.upper(), logging.INFO)
         logger.log(log_level, "[ALERT] %s: %s", title, message)
         return True
@@ -54,12 +56,16 @@ class TelegramNotifier(Notifier):
         self._chat_id = chat_id
         self._api_base = f"https://api.telegram.org/bot{bot_token}"
 
-    def send_alert(self, level: str, title: str, message: str, data: Optional[Dict[str, Any]] = None) -> bool:
+    def send_alert(
+        self, level: str, title: str, message: str, data: dict[str, Any] | None = None
+    ) -> bool:
         if _requests is None:
             logger.error("requests library required for TelegramNotifier")
             return False
 
-        level_emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨", "error": "❌"}.get(level, "📌")
+        level_emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨", "error": "❌"}.get(
+            level, "📌"
+        )
         text = f"{level_emoji} *{title}*\n{message}"
         if data:
             for key, value in data.items():
@@ -80,11 +86,13 @@ class TelegramNotifier(Notifier):
 class WebhookNotifier(Notifier):
     """Send notifications to a generic webhook URL."""
 
-    def __init__(self, url: str, headers: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, url: str, headers: dict[str, str] | None = None) -> None:
         self._url = url
         self._headers = headers or {"Content-Type": "application/json"}
 
-    def send_alert(self, level: str, title: str, message: str, data: Optional[Dict[str, Any]] = None) -> bool:
+    def send_alert(
+        self, level: str, title: str, message: str, data: dict[str, Any] | None = None
+    ) -> bool:
         if _requests is None:
             logger.error("requests library required for WebhookNotifier")
             return False
@@ -107,13 +115,15 @@ class WebhookNotifier(Notifier):
 class CompositeNotifier(Notifier):
     """Fan-out notifications to multiple channels."""
 
-    def __init__(self, notifiers: Optional[List[Notifier]] = None) -> None:
+    def __init__(self, notifiers: list[Notifier] | None = None) -> None:
         self._notifiers = notifiers or []
 
     def add(self, notifier: Notifier) -> None:
         self._notifiers.append(notifier)
 
-    def send_alert(self, level: str, title: str, message: str, data: Optional[Dict[str, Any]] = None) -> bool:
+    def send_alert(
+        self, level: str, title: str, message: str, data: dict[str, Any] | None = None
+    ) -> bool:
         results = []
         for notifier in self._notifiers:
             try:
@@ -124,7 +134,7 @@ class CompositeNotifier(Notifier):
         return any(results) if results else False
 
 
-def create_notifier(config: Dict[str, Any]) -> Notifier:
+def create_notifier(config: dict[str, Any]) -> Notifier:
     """Factory function to create the appropriate notifier from configuration.
 
     Config example::
@@ -142,20 +152,24 @@ def create_notifier(config: Dict[str, Any]) -> Notifier:
     telegram_config = config.get("telegram", {})
     if telegram_config.get("bot_token") and telegram_config.get("chat_id"):
         try:
-            composite.add(TelegramNotifier(
-                bot_token=telegram_config["bot_token"],
-                chat_id=telegram_config["chat_id"],
-            ))
+            composite.add(
+                TelegramNotifier(
+                    bot_token=telegram_config["bot_token"],
+                    chat_id=telegram_config["chat_id"],
+                )
+            )
         except Exception as exc:
             logger.warning("Failed to initialize Telegram notifier: %s", exc)
 
     webhook_config = config.get("webhook", {})
     if webhook_config.get("url"):
         try:
-            composite.add(WebhookNotifier(
-                url=webhook_config["url"],
-                headers=webhook_config.get("headers"),
-            ))
+            composite.add(
+                WebhookNotifier(
+                    url=webhook_config["url"],
+                    headers=webhook_config.get("headers"),
+                )
+            )
         except Exception as exc:
             logger.warning("Failed to initialize Webhook notifier: %s", exc)
 

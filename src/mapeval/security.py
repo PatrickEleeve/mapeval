@@ -6,16 +6,15 @@ read-only mode enforcement.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
 import logging
-import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +29,10 @@ class AuditLogger:
     def __init__(self, log_dir: str = "logs/audit") -> None:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._entries: List[Dict[str, Any]] = []
-        self._log_file = self._log_dir / f"audit_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl"
+        self._entries: list[dict[str, Any]] = []
+        self._log_file = (
+            self._log_dir / f"audit_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl"
+        )
 
     def log_order(
         self,
@@ -39,9 +40,9 @@ class AuditLogger:
         symbol: str,
         side: str,
         quantity: float,
-        price: Optional[float],
-        order_id: Optional[str],
-        response: Optional[Dict[str, Any]] = None,
+        price: float | None,
+        order_id: str | None,
+        response: dict[str, Any] | None = None,
         execution_mode: str = "live",
     ) -> None:
         """Log an order action with full details."""
@@ -73,7 +74,7 @@ class AuditLogger:
     def log_control_action(
         self,
         action: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
         execution_mode: str = "live",
     ) -> None:
         """Log a manual or automated control-plane action."""
@@ -94,14 +95,14 @@ class AuditLogger:
         except Exception as exc:
             logger.error("Failed to write audit log: %s", exc)
 
-    def _sanitize_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_response(self, response: dict[str, Any]) -> dict[str, Any]:
         """Remove sensitive fields from response before logging."""
         sanitized = dict(response)
         for key in ("signature", "apiKey", "secretKey"):
             sanitized.pop(key, None)
         return sanitized
 
-    def get_entries(self) -> List[Dict[str, Any]]:
+    def get_entries(self) -> list[dict[str, Any]]:
         return list(self._entries)
 
     @property
@@ -133,9 +134,7 @@ class ReadOnlyGuard:
     def check(self, operation: str = "order") -> None:
         """Raise if read-only mode is active."""
         if self._enabled:
-            raise PermissionError(
-                f"Operation '{operation}' blocked: system is in read-only mode"
-            )
+            raise PermissionError(f"Operation '{operation}' blocked: system is in read-only mode")
 
 
 def mask_key(key: str) -> str:
@@ -145,7 +144,9 @@ def mask_key(key: str) -> str:
     return f"{key[:4]}...{key[-4:]}"
 
 
-def validate_api_keys(api_key: Optional[str], api_secret: Optional[str], exchange: str = "binance") -> List[str]:
+def validate_api_keys(
+    api_key: str | None, api_secret: str | None, exchange: str = "binance"
+) -> list[str]:
     """Validate that API keys are present and properly formatted.
 
     Returns a list of warning messages (empty if all good).
@@ -170,7 +171,7 @@ def generate_api_token(length_bytes: int = 24) -> str:
     return secrets.token_urlsafe(length_bytes)
 
 
-def constant_time_equals(left: Optional[str], right: Optional[str]) -> bool:
+def constant_time_equals(left: str | None, right: str | None) -> bool:
     """Compare two secrets without leaking timing information."""
     if left is None or right is None:
         return False

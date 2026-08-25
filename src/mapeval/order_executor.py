@@ -11,12 +11,11 @@ agnostic to the execution mode.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
 
 from mapeval.order_models import (
     Fill,
@@ -27,6 +26,7 @@ from mapeval.order_models import (
     OrderType,
     PositionInfo,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class OrderExecutor(ABC):
         ...
 
     @abstractmethod
-    def sync_positions(self) -> Dict[str, PositionInfo]:
+    def sync_positions(self) -> dict[str, PositionInfo]:
         """Fetch current positions from the execution venue."""
         ...
 
@@ -83,7 +83,7 @@ class GuardedOrderExecutor(OrderExecutor):
     def get_order_status(self, symbol: str, order_id: str) -> OrderStatus:
         return self._delegate.get_order_status(symbol, order_id)
 
-    def sync_positions(self) -> Dict[str, PositionInfo]:
+    def sync_positions(self) -> dict[str, PositionInfo]:
         return self._delegate.sync_positions()
 
     def sync_balance(self) -> float:
@@ -105,12 +105,12 @@ class SimulatedExecutorBase(OrderExecutor):
         self._commission_rate = commission_rate
         self._slippage = slippage
         self._balance = initial_balance
-        self._positions: Dict[str, PositionInfo] = {}
-        self._order_history: List[OrderResult] = []
+        self._positions: dict[str, PositionInfo] = {}
+        self._order_history: list[OrderResult] = []
 
     def _apply_fill_to_book(self, order: Order, exec_price: float, commission: float) -> None:
         """Hook for subclasses that maintain an internal position book."""
-        return None
+        return
 
     def _simulate_fill(self, order: Order, order_id_prefix: str) -> OrderResult:
         """Execute a simulated fill with slippage and commission modeling."""
@@ -151,7 +151,7 @@ class SimulatedExecutorBase(OrderExecutor):
         self._order_history.append(result)
         return result
 
-    def sync_positions(self) -> Dict[str, PositionInfo]:
+    def sync_positions(self) -> dict[str, PositionInfo]:
         return dict(self._positions)
 
     def sync_balance(self) -> float:
@@ -199,7 +199,7 @@ class PaperExecutor(SimulatedExecutorBase):
         )
         self._fill_latency_ms = fill_latency_ms
         self._market_data = market_data_provider
-        self._pending_orders: Dict[str, Order] = {}
+        self._pending_orders: dict[str, Order] = {}
 
     def _apply_fill_to_book(self, order: Order, exec_price: float, commission: float) -> None:
         """Update paper positions and wallet balance from an executed order."""
@@ -224,7 +224,9 @@ class PaperExecutor(SimulatedExecutorBase):
             new_qty = existing.quantity + signed_qty
             weighted_notional = existing.entry_price * existing.quantity + exec_price * signed_qty
             existing.quantity = new_qty
-            existing.entry_price = weighted_notional / new_qty if abs(new_qty) > 1e-12 else exec_price
+            existing.entry_price = (
+                weighted_notional / new_qty if abs(new_qty) > 1e-12 else exec_price
+            )
             existing.mark_price = exec_price
             existing.unrealized_pnl = 0.0
             return
@@ -290,7 +292,7 @@ class LiveExecutor(OrderExecutor):
         """
         self._client = client
         self._order_timeout = order_timeout_seconds
-        self._order_history: List[OrderResult] = []
+        self._order_history: list[OrderResult] = []
 
     def submit_order(self, order: Order) -> OrderResult:
         try:
@@ -364,7 +366,12 @@ class LiveExecutor(OrderExecutor):
             try:
                 response = self._client.get_order(symbol=symbol, order_id=order_id)
                 status = self._map_status(response.get("status", ""))
-                if status in (OrderStatus.FILLED, OrderStatus.REJECTED, OrderStatus.CANCELED, OrderStatus.EXPIRED):
+                if status in (
+                    OrderStatus.FILLED,
+                    OrderStatus.REJECTED,
+                    OrderStatus.CANCELED,
+                    OrderStatus.EXPIRED,
+                ):
                     return status, response
             except Exception as exc:
                 logger.warning("Error polling order %s: %s", order_id, exc)
@@ -372,10 +379,8 @@ class LiveExecutor(OrderExecutor):
 
         # Timeout - cancel the order
         logger.warning("Order %s timed out after %.0fs, canceling", order_id, self._order_timeout)
-        try:
+        with contextlib.suppress(Exception):
             self._client.cancel_order(symbol=symbol, order_id=order_id)
-        except Exception:
-            pass
         return OrderStatus.CANCELED, {"orderId": order_id, "status": "CANCELED"}
 
     def cancel_order(self, symbol: str, order_id: str) -> bool:
@@ -393,7 +398,7 @@ class LiveExecutor(OrderExecutor):
         except Exception:
             return OrderStatus.REJECTED
 
-    def sync_positions(self) -> Dict[str, PositionInfo]:
+    def sync_positions(self) -> dict[str, PositionInfo]:
         positions = {}
         try:
             raw_positions = self._client.get_positions()
@@ -420,7 +425,9 @@ class LiveExecutor(OrderExecutor):
             balances = self._client.get_balance()
             for b in balances:
                 if b.get("asset") == "USDT":
-                    return float(b.get("balance", b.get("crossWalletBalance", b.get("availableBalance", 0))))
+                    return float(
+                        b.get("balance", b.get("crossWalletBalance", b.get("availableBalance", 0)))
+                    )
         except Exception as exc:
             logger.error("Failed to sync balance: %s", exc)
         return 0.0
@@ -456,16 +463,15 @@ def create_executor(
             slippage=slippage,
             initial_balance=initial_balance,
         )
-    elif mode == "paper":
+    if mode == "paper":
         return PaperExecutor(
             commission_rate=commission_rate,
             slippage=slippage,
             initial_balance=initial_balance,
             market_data_provider=market_data_provider,
         )
-    elif mode == "live":
+    if mode == "live":
         if binance_client is None:
             raise ValueError("BinanceFuturesClient is required for live execution mode")
         return LiveExecutor(client=binance_client)
-    else:
-        raise ValueError(f"Unknown execution mode: {mode}")
+    raise ValueError(f"Unknown execution mode: {mode}")

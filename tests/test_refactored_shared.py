@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
@@ -24,6 +25,7 @@ from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType
 # ---------------------------------------------------------------------------
 # exposure_utils.sanitize_exposures
 # ---------------------------------------------------------------------------
+
 
 class TestSanitizeExposures:
     def test_clips_per_symbol(self):
@@ -103,8 +105,10 @@ class TestSanitizeExposures:
 # exposure_utils.compute_fallback_exposures
 # ---------------------------------------------------------------------------
 
+
 class MockTools:
     """Mock tools for testing fallback exposures."""
+
     def calculate_moving_average(self, symbol: str, time: pd.Timestamp, window: int) -> float:
         if window == 21:
             return 55000.0
@@ -141,6 +145,7 @@ class TestComputeFallbackExposures:
 # ---------------------------------------------------------------------------
 # SimulatedExecutorBase shared fill logic
 # ---------------------------------------------------------------------------
+
 
 class TestSimulatedExecutorBase:
     def test_simulation_inherits_base(self):
@@ -211,6 +216,7 @@ class TestSimulatedExecutorBase:
 # ---------------------------------------------------------------------------
 # BaseMarketData (via BacktestMarketData)
 # ---------------------------------------------------------------------------
+
 
 class TestBaseMarketData:
     def _make_backtest_data(self):

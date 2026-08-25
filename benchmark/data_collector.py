@@ -8,7 +8,6 @@ import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -25,8 +24,16 @@ class BinanceDataCollector:
 
     # 默认交易对
     DEFAULT_SYMBOLS = [
-        "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
-        "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+        "BTCUSDT",
+        "ETHUSDT",
+        "BNBUSDT",
+        "XRPUSDT",
+        "SOLUSDT",
+        "DOGEUSDT",
+        "ADAUSDT",
+        "AVAXUSDT",
+        "LINKUSDT",
+        "DOTUSDT",
     ]
 
     # 时间周期配置
@@ -48,8 +55,8 @@ class BinanceDataCollector:
         self,
         symbol: str,
         interval: str,
-        start_time: Optional[int] = None,
-        end_time: Optional[int] = None,
+        start_time: int | None = None,
+        end_time: int | None = None,
         limit: int = 1500,
     ) -> pd.DataFrame:
         """获取K线数据"""
@@ -81,11 +88,23 @@ class BinanceDataCollector:
         else:
             raise RuntimeError(f"All endpoints failed for {symbol}")
 
-        df = pd.DataFrame(data, columns=[
-            "open_time", "open", "high", "low", "close", "volume",
-            "close_time", "quote_volume", "trades", "taker_buy_base",
-            "taker_buy_quote", "ignore"
-        ])
+        df = pd.DataFrame(
+            data,
+            columns=[
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_volume",
+                "trades",
+                "taker_buy_base",
+                "taker_buy_quote",
+                "ignore",
+            ],
+        )
 
         df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
         df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
@@ -99,9 +118,9 @@ class BinanceDataCollector:
     def fetch_multi_timeframe(
         self,
         symbol: str,
-        intervals: List[str] = ["1h", "4h", "1d"],
+        intervals: list[str] = ["1h", "4h", "1d"],
         days_back: int = 365,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """获取多个时间周期的数据"""
 
         end_time = int(datetime.now().timestamp() * 1000)
@@ -136,10 +155,10 @@ class BinanceDataCollector:
 
     def save_dataset(
         self,
-        symbols: Optional[List[str]] = None,
-        intervals: List[str] = ["1h", "4h", "1d"],
+        symbols: list[str] | None = None,
+        intervals: list[str] = ["1h", "4h", "1d"],
         days_back: int = 365,
-        filename: Optional[str] = None,
+        filename: str | None = None,
     ) -> Path:
         """保存完整数据集"""
 
@@ -151,8 +170,7 @@ class BinanceDataCollector:
             try:
                 data = self.fetch_multi_timeframe(symbol, intervals, days_back)
                 all_data[symbol] = {
-                    interval: df.to_dict(orient="records")
-                    for interval, df in data.items()
+                    interval: df.to_dict(orient="records") for interval, df in data.items()
                 }
             except Exception as e:
                 print(f"Failed to fetch {symbol}: {e}")
@@ -169,11 +187,11 @@ class BinanceDataCollector:
         print(f"\nDataset saved to {filepath}")
         return filepath
 
-    def load_dataset(self, filename: str) -> Dict[str, Dict[str, pd.DataFrame]]:
+    def load_dataset(self, filename: str) -> dict[str, dict[str, pd.DataFrame]]:
         """加载数据集"""
         filepath = self.data_dir / filename
 
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             raw_data = json.load(f)
 
         result = {}
@@ -191,7 +209,7 @@ class BinanceDataCollector:
 class TestCaseGenerator:
     """从历史数据生成测试用例"""
 
-    def __init__(self, data: Dict[str, Dict[str, pd.DataFrame]]):
+    def __init__(self, data: dict[str, dict[str, pd.DataFrame]]):
         self.data = data
 
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -246,7 +264,7 @@ class TestCaseGenerator:
         lookahead_bars: int = 4,  # 预测未来4根K线
         min_move_pct: float = 0.5,  # 至少0.5%的移动才算有效信号
         num_cases: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         生成信号识别测试用例
 
@@ -280,10 +298,14 @@ class TestCaseGenerator:
             # 确定答案
             if future_return > min_move_pct:
                 ground_truth = "LONG"
-                difficulty = "easy" if future_return > 2.0 else "medium" if future_return > 1.0 else "hard"
+                difficulty = (
+                    "easy" if future_return > 2.0 else "medium" if future_return > 1.0 else "hard"
+                )
             elif future_return < -min_move_pct:
                 ground_truth = "SHORT"
-                difficulty = "easy" if future_return < -2.0 else "medium" if future_return < -1.0 else "hard"
+                difficulty = (
+                    "easy" if future_return < -2.0 else "medium" if future_return < -1.0 else "hard"
+                )
             else:
                 continue
 
@@ -294,9 +316,9 @@ class TestCaseGenerator:
             elif row["rsi"] > 70:
                 signals.append("RSI_OVERBOUGHT")
 
-            if row["macd_hist"] > 0 and df.iloc[i-1]["macd_hist"] < 0:
+            if row["macd_hist"] > 0 and df.iloc[i - 1]["macd_hist"] < 0:
                 signals.append("MACD_GOLDEN_CROSS")
-            elif row["macd_hist"] < 0 and df.iloc[i-1]["macd_hist"] > 0:
+            elif row["macd_hist"] < 0 and df.iloc[i - 1]["macd_hist"] > 0:
                 signals.append("MACD_DEATH_CROSS")
 
             if row["bb_position"] < 0.1:
@@ -310,7 +332,6 @@ class TestCaseGenerator:
                 "symbol": symbol,
                 "interval": interval,
                 "timestamp": row["open_time"].isoformat(),
-
                 # 市场状态 (这是给LLM看的)
                 "market_context": {
                     "price": round(current_close, 2),
@@ -324,14 +345,12 @@ class TestCaseGenerator:
                     "volatility_rank": round(row["volatility_rank"], 2),
                 },
                 "detected_signals": signals,
-
                 # 答案 (评估时用)
                 "ground_truth": {
                     "direction": ground_truth,
                     "actual_return_pct": round(future_return, 2),
                     "lookahead_bars": lookahead_bars,
                 },
-
                 "difficulty": difficulty,
                 "category": "signal_recognition",
             }
@@ -340,6 +359,7 @@ class TestCaseGenerator:
 
         # 采样并平衡
         import random
+
         random.shuffle(cases)
 
         # 平衡正负样本
@@ -357,7 +377,7 @@ class TestCaseGenerator:
         symbol: str,
         interval: str = "1h",
         num_cases: int = 50,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         生成风险意识测试用例
 
@@ -380,7 +400,7 @@ class TestCaseGenerator:
             row = df.iloc[i]
 
             # 计算回撤
-            recent_high = df.iloc[max(0, i-20):i+1]["high"].max()
+            recent_high = df.iloc[max(0, i - 20) : i + 1]["high"].max()
             drawdown = (recent_high - row["close"]) / recent_high * 100
 
             # 找高风险场景
@@ -407,9 +427,11 @@ class TestCaseGenerator:
                 wrong_actions = ["INCREASE_LEVERAGE"]
 
             # 场景4: 死叉后继续下跌
-            elif (row["macd_hist"] < 0 and
-                  df.iloc[i-1]["macd_hist"] < 0 and
-                  df.iloc[i-2]["macd_hist"] > 0):
+            elif (
+                row["macd_hist"] < 0
+                and df.iloc[i - 1]["macd_hist"] < 0
+                and df.iloc[i - 2]["macd_hist"] > 0
+            ):
                 risk_scenario = "CONFIRMED_DOWNTREND"
                 correct_actions = ["SHORT", "CLOSE_LONG", "HOLD_SHORT"]
                 wrong_actions = ["INCREASE_LONG"]
@@ -422,7 +444,6 @@ class TestCaseGenerator:
                 "symbol": symbol,
                 "interval": interval,
                 "timestamp": row["open_time"].isoformat(),
-
                 "scenario": risk_scenario,
                 "market_context": {
                     "price": round(row["close"], 2),
@@ -433,20 +454,18 @@ class TestCaseGenerator:
                     "trend": row["trend"],
                     "macd_histogram": round(row["macd_hist"], 4),
                 },
-
                 "question": f"当前{symbol}处于{risk_scenario}状态，你会如何操作？",
-
                 "ground_truth": {
                     "correct_actions": correct_actions,
                     "wrong_actions": wrong_actions,
                 },
-
                 "category": "risk_awareness",
             }
 
             cases.append(case)
 
         import random
+
         random.shuffle(cases)
         return cases[:num_cases]
 
@@ -456,7 +475,7 @@ class TestCaseGenerator:
         interval: str = "1h",
         num_scenarios: int = 20,
         variations_per_scenario: int = 5,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         生成一致性测试用例
 
@@ -501,18 +520,17 @@ class TestCaseGenerator:
                 noisy_context["macd_histogram"] = round(
                     base_context["macd_histogram"] * random.uniform(0.9, 1.1), 4
                 )
-                noisy_context["atr_pct"] = round(base_context["atr_pct"] + random.uniform(-0.1, 0.1), 2)
+                noisy_context["atr_pct"] = round(
+                    base_context["atr_pct"] + random.uniform(-0.1, 0.1), 2
+                )
 
                 case = {
                     "id": f"consistency_{scenario_id}_{var}",
                     "scenario_group": f"scenario_{scenario_id}",
                     "variation": var,
                     "symbol": symbol,
-
                     "market_context": noisy_context,
-
                     "question": "基于以上市场数据，你建议做多(LONG)、做空(SHORT)还是观望(HOLD)?",
-
                     "category": "consistency",
                     "note": "同一scenario_group内的用例应该得到一致的方向判断",
                 }
@@ -524,9 +542,9 @@ class TestCaseGenerator:
     def export_test_suite(
         self,
         output_dir: str = "benchmark/test_suites",
-        symbols: Optional[List[str]] = None,
+        symbols: list[str] | None = None,
         interval: str = "1h",
-    ) -> Dict[str, Path]:
+    ) -> dict[str, Path]:
         """导出完整测试集"""
 
         output_path = Path(output_dir)
@@ -546,7 +564,9 @@ class TestCaseGenerator:
             print(f"Generating cases for {symbol}...")
 
             try:
-                signal_cases = self.generate_signal_recognition_cases(symbol, interval, num_cases=50)
+                signal_cases = self.generate_signal_recognition_cases(
+                    symbol, interval, num_cases=50
+                )
                 all_cases["signal_recognition"].extend(signal_cases)
             except Exception as e:
                 print(f"  Signal recognition failed: {e}")
@@ -571,12 +591,17 @@ class TestCaseGenerator:
 
             filepath = output_path / f"{category}.json"
             with open(filepath, "w") as f:
-                json.dump({
-                    "category": category,
-                    "generated_at": datetime.now().isoformat(),
-                    "total_cases": len(cases),
-                    "cases": cases,
-                }, f, indent=2, default=str)
+                json.dump(
+                    {
+                        "category": category,
+                        "generated_at": datetime.now().isoformat(),
+                        "total_cases": len(cases),
+                        "cases": cases,
+                    },
+                    f,
+                    indent=2,
+                    default=str,
+                )
 
             saved_files[category] = filepath
             print(f"Saved {len(cases)} {category} cases to {filepath}")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 import pandas as pd
 
@@ -13,7 +12,7 @@ class FinancialTools:
     """Expose simple analytics over the market data set."""
 
     market_data_df: pd.DataFrame
-    funding_rates: Optional[Dict[str, float]] = None
+    funding_rates: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         data = self.market_data_df.copy()
@@ -27,7 +26,7 @@ class FinancialTools:
             data.index = data.index.tz_convert(None)
         self.market_data = data.sort_index()
 
-    def get_funding_rate(self, asset: str) -> Optional[float]:
+    def get_funding_rate(self, asset: str) -> float | None:
         if not self.funding_rates:
             return None
         return self.funding_rates.get(asset)
@@ -44,7 +43,9 @@ class FinancialTools:
         window = series.loc[:end].tail(days)
         return window
 
-    def calculate_moving_average(self, asset: str, end_date: pd.Timestamp, window_size: int) -> Optional[float]:
+    def calculate_moving_average(
+        self, asset: str, end_date: pd.Timestamp, window_size: int
+    ) -> float | None:
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
         window = series.loc[:end].tail(window_size)
@@ -52,7 +53,9 @@ class FinancialTools:
             return None
         return float(window.mean())
 
-    def calculate_volatility(self, asset: str, end_date: pd.Timestamp, window_size: int) -> Optional[float]:
+    def calculate_volatility(
+        self, asset: str, end_date: pd.Timestamp, window_size: int
+    ) -> float | None:
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
         window = series.loc[:end].tail(window_size)
@@ -63,7 +66,9 @@ class FinancialTools:
             return 0.0
         return float(returns.std())
 
-    def calculate_rsi(self, asset: str, end_date: pd.Timestamp, window_size: int = 14) -> Optional[float]:
+    def calculate_rsi(
+        self, asset: str, end_date: pd.Timestamp, window_size: int = 14
+    ) -> float | None:
         """Compute the Relative Strength Index (RSI)."""
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
@@ -92,7 +97,7 @@ class FinancialTools:
         fast_period: int = 12,
         slow_period: int = 26,
         signal_period: int = 9,
-    ) -> Optional[Dict[str, float]]:
+    ) -> dict[str, float] | None:
         """Compute MACD line, signal line, and histogram."""
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
@@ -117,7 +122,7 @@ class FinancialTools:
         asset: str,
         end_date: pd.Timestamp,
         window_size: int = 14,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Approximate Average True Range (ATR) using close-to-close changes."""
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
@@ -138,7 +143,7 @@ class FinancialTools:
         end_date: pd.Timestamp,
         window_size: int = 20,
         num_std: float = 2.0,
-    ) -> Optional[Dict[str, float]]:
+    ) -> dict[str, float] | None:
         """Return Bollinger Bands mid/upper/lower values."""
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
@@ -162,7 +167,7 @@ class FinancialTools:
         asset: str,
         end_date: pd.Timestamp,
         window_size: int = 20,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Coefficient of Variation (std/mean) over the window."""
         end = pd.to_datetime(end_date)
         series = self._resolve_series(asset)
@@ -181,7 +186,7 @@ class FinancialTools:
         end_date: pd.Timestamp,
         window_size: int,
         periods: int = 5,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Estimate slope of the moving average in units of price change per period."""
         if periods <= 0:
             raise ValueError("periods must be positive")

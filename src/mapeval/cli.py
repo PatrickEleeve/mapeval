@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 import sys
+from importlib import import_module
 
 
 def main() -> None:

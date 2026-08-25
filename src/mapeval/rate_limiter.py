@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ class RateLimiter:
 
             self._used_weight += weight
 
-    def update_from_headers(self, headers: Dict[str, str]) -> None:
+    def update_from_headers(self, headers: dict[str, str]) -> None:
         """Update internal weight tracking from Binance response headers.
 
         Binance returns ``X-MBX-USED-WEIGHT-1M`` with the actual server-side weight.
@@ -118,7 +119,7 @@ class RateLimiter:
             self._maybe_reset()
             return max(0, self._max_weight - self._used_weight)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return current rate limiter state for monitoring."""
         with self._lock:
             self._maybe_reset()

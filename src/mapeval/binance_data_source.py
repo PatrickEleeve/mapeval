@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
+
 
 try:
     import requests
@@ -24,6 +26,7 @@ from urllib.parse import urlencode
 
 from mapeval.rate_limiter import RateLimiter
 
+
 DEFAULT_BASE = "https://api1.binance.com"
 FALLBACK_BASES: Sequence[str] = (
     DEFAULT_BASE,
@@ -33,7 +36,7 @@ FALLBACK_BASES: Sequence[str] = (
 )
 
 # Module-level rate limiter instance, shared across all calls
-_rate_limiter: Optional[RateLimiter] = None
+_rate_limiter: RateLimiter | None = None
 
 
 def set_rate_limiter(limiter: RateLimiter) -> None:
@@ -42,19 +45,19 @@ def set_rate_limiter(limiter: RateLimiter) -> None:
     _rate_limiter = limiter
 
 
-def get_rate_limiter() -> Optional[RateLimiter]:
+def get_rate_limiter() -> RateLimiter | None:
     """Return the current shared rate limiter, if set."""
     return _rate_limiter
 
 
-def _normalize_base_urls(base_url: str | Iterable[str] | None) -> List[str]:
+def _normalize_base_urls(base_url: str | Iterable[str] | None) -> list[str]:
     if base_url is None:
         sources: Iterable[str] = FALLBACK_BASES
     elif isinstance(base_url, (list, tuple, set)):
         sources = base_url
     else:
         sources = [base_url]
-    normalized: List[str] = []
+    normalized: list[str] = []
     for raw in sources:
         text = str(raw).strip()
         if not text:
@@ -63,7 +66,9 @@ def _normalize_base_urls(base_url: str | Iterable[str] | None) -> List[str]:
     return normalized or [DEFAULT_BASE.rstrip("/")]
 
 
-def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 10, weight: int = 1) -> Any:
+def _http_get(
+    url: str, params: dict[str, Any] | None = None, timeout: int = 10, weight: int = 1
+) -> Any:
     limiter = _rate_limiter
     if limiter is not None:
         limiter.acquire(weight)
@@ -84,7 +89,7 @@ def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 
         return resp.json()
 
     # fallback using urllib
-    from urllib.request import urlopen, Request
+    from urllib.request import Request, urlopen
 
     if params:
         url = url + "?" + urlencode(params)
@@ -96,7 +101,7 @@ def _http_get(url: str, params: Optional[Dict[str, Any]] = None, timeout: int = 
         return json.loads(body.decode())
 
 
-def check_api(base_url: str = DEFAULT_BASE) -> Dict[str, Any]:
+def check_api(base_url: str = DEFAULT_BASE) -> dict[str, Any]:
     """Quick health/time check against Binance endpoints.
 
     Returns a dict with keys: reachable (bool), server_time (int|None), ping_ms (float|None), error (str|None)
@@ -135,22 +140,22 @@ def check_api(base_url: str = DEFAULT_BASE) -> Dict[str, Any]:
 def fetch_klines(
     symbol: str,
     interval: str = "1d",
-    start_str: Optional[str] = None,
-    end_str: Optional[str] = None,
+    start_str: str | None = None,
+    end_str: str | None = None,
     limit: int = 1000,
     base_url: str | Iterable[str] = DEFAULT_BASE,
-) -> List[List[Any]]:
+) -> list[list[Any]]:
     """Fetch klines (candles) from Binance. Returns raw kline arrays.
 
     Parameters follow Binance API naming. start_str/end_str can be ISO dates or timestamps in ms.
     """
-    params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
+    params: dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
     if start_str is not None:
         params["startTime"] = start_str
     if end_str is not None:
         params["endTime"] = end_str
 
-    errors: List[Exception] = []
+    errors: list[Exception] = []
     for root in _normalize_base_urls(base_url):
         klines_url = root + "/api/v3/klines"
         try:
@@ -164,8 +169,8 @@ def fetch_klines(
 
 
 def get_ticker_price(
-    symbol: Optional[str] = None,
-    symbols: Optional[list[str]] = None,
+    symbol: str | None = None,
+    symbols: list[str] | None = None,
     base_url: str | Iterable[str] = DEFAULT_BASE,
 ) -> Any:
     """Call /api/v3/ticker/price to get recent price(s).
@@ -179,13 +184,13 @@ def get_ticker_price(
     if symbol is not None and symbols is not None:
         raise ValueError("Provide only one of 'symbol' or 'symbols'")
 
-    params: Dict[str, Any] = {}
+    params: dict[str, Any] = {}
     if symbol is not None:
         params["symbol"] = symbol
     elif symbols is not None:
         params["symbols"] = json.dumps(symbols, separators=(",", ":"))
 
-    errors: List[Exception] = []
+    errors: list[Exception] = []
     for root in _normalize_base_urls(base_url):
         url = root + "/api/v3/ticker/price"
         try:
@@ -200,7 +205,7 @@ def get_ticker_price(
 
 
 def get_futures_premium_index(
-    symbol: Optional[str] = None,
+    symbol: str | None = None,
     *,
     base_url: str = "https://fapi.binance.com",
 ) -> Any:
@@ -210,7 +215,7 @@ def get_futures_premium_index(
     - If omitted, returns a list of dicts for all symbols
     """
     url = base_url.rstrip("/") + "/fapi/v1/premiumIndex"
-    params: Dict[str, Any] = {}
+    params: dict[str, Any] = {}
     if symbol is not None:
         params["symbol"] = symbol
         return _http_get(url, params=params)

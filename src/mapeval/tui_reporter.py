@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 import pandas as pd
+from rich import box
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich import box
+
 
 class TUIReporter:
     """Renders a real-time TUI dashboard for the trading session."""
@@ -19,9 +21,9 @@ class TUIReporter:
         self.console = Console()
         self.layout = self._make_layout()
         self.live = Live(self.layout, refresh_per_second=4, screen=True)
-        self.logs: List[str] = []
+        self.logs: list[str] = []
         self.max_logs = 20
-        self.warnings: List[Dict[str, Any]] = []
+        self.warnings: list[dict[str, Any]] = []
         self.live.start()
 
     def _make_layout(self) -> Layout:
@@ -37,7 +39,7 @@ class TUIReporter:
         )
         return layout
 
-    def record_tick(self, timestamp: pd.Timestamp, account: Any, prices: Dict[str, float]) -> None:
+    def record_tick(self, timestamp: pd.Timestamp, account: Any, prices: dict[str, float]) -> None:
         self._update_header(timestamp)
         self._update_account(account)
         self._update_positions(account, prices)
@@ -54,7 +56,9 @@ class TUIReporter:
 
     def _update_header(self, timestamp: pd.Timestamp) -> None:
         title = f"MAPEval Real-Time Benchmark | {timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-        self.layout["header"].update(Panel(Text(title, justify="center", style="bold white on blue")))
+        self.layout["header"].update(
+            Panel(Text(title, justify="center", style="bold white on blue"))
+        )
 
     def _update_account(self, account: Any) -> None:
         table = Table(box=box.SIMPLE, expand=True)
@@ -67,13 +71,13 @@ class TUIReporter:
         table.add_row("Realized PnL", f"{account.realized_pnl:,.2f}")
         table.add_row("Margin Used", f"{account.margin_used:,.2f}")
         table.add_row("Avail Margin", f"{account.available_margin:,.2f}")
-        
+
         if getattr(account, "maintenance_margin_req", 0) > 0:
-             table.add_row("Maint. Margin", f"{account.maintenance_margin_req:,.2f}")
+            table.add_row("Maint. Margin", f"{account.maintenance_margin_req:,.2f}")
 
         self.layout["account"].update(Panel(table, title="Account Summary"))
 
-    def _update_positions(self, account: Any, prices: Dict[str, float]) -> None:
+    def _update_positions(self, account: Any, prices: dict[str, float]) -> None:
         table = Table(box=box.SIMPLE_HEAD, expand=True)
         table.add_column("Symbol", style="bold")
         table.add_column("Side")
@@ -93,7 +97,7 @@ class TUIReporter:
                 mark_price = prices.get(symbol, pos.entry_price)
                 pnl = (mark_price - pos.entry_price) * pos.quantity
                 pnl_style = "green" if pnl >= 0 else "red"
-                
+
                 table.add_row(
                     symbol,
                     f"[{side_style}]{side}[/{side_style}]",
@@ -101,7 +105,7 @@ class TUIReporter:
                     f"{pos.entry_price:.4f}",
                     f"{mark_price:.4f}",
                     f"[{pnl_style}]{pnl:+.2f}[/{pnl_style}]",
-                    f"{pos.leverage:.1f}x"
+                    f"{pos.leverage:.1f}x",
                 )
 
         self.layout["positions"].update(Panel(table, title="Open Positions"))
@@ -110,17 +114,20 @@ class TUIReporter:
         log_text = "\n".join(self.logs)
         self.layout["footer"].update(Panel(log_text, title="Event Log"))
 
-    def finalize(self, equity_history: List[Dict[str, Any]], trade_log: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def finalize(
+        self, equity_history: list[dict[str, Any]], trade_log: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         self.live.stop()
         # Return a dummy report or delegate to standard reporter logic if needed.
         # For now, we just return basic stats to satisfy the interface.
         # The main.py might print the summary again, which is fine.
-        
+
         # We can reuse the logic from RealTimeReporter for the final print summary
         # by importing it or just letting main.py handle the return value.
         # But main.py expects this method to return the report dict.
-        
+
         from mapeval.reporter import RealTimeReporter
+
         # Create a temporary standard reporter to generate the final report
         std_reporter = RealTimeReporter()
         std_reporter.warnings = self.warnings

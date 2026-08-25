@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
 from mapeval.strategies.base import Strategy, StrategySignal
 from mapeval.tools import FinancialTools
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +48,13 @@ class BacktestResult:
     """Complete results from a backtest run."""
 
     config: BacktestConfig
-    equity_curve: List[Dict[str, Any]] = field(default_factory=list)
-    trades: List[Dict[str, Any]] = field(default_factory=list)
-    decisions: List[Dict[str, Any]] = field(default_factory=list)
+    equity_curve: list[dict[str, Any]] = field(default_factory=list)
+    trades: list[dict[str, Any]] = field(default_factory=list)
+    decisions: list[dict[str, Any]] = field(default_factory=list)
     final_equity: float = 0.0
     total_return: float = 0.0
     total_trades: int = 0
-    performance: Dict[str, Any] = field(default_factory=dict)
+    performance: dict[str, Any] = field(default_factory=dict)
     duration_bars: int = 0
 
     def summary(self) -> str:
@@ -82,8 +82,8 @@ class Backtester:
     def __init__(
         self,
         strategy: Strategy,
-        symbols: List[str],
-        config: Optional[BacktestConfig] = None,
+        symbols: list[str],
+        config: BacktestConfig | None = None,
         decision_every_n_bars: int = 1,
     ) -> None:
         self._strategy = strategy
@@ -107,10 +107,10 @@ class Backtester:
         self._strategy.initialize(self._symbols, self._config.__dict__)
 
         balance = self._config.initial_capital
-        positions: Dict[str, Dict[str, float]] = {}  # symbol -> {qty, entry_price}
-        equity_curve: List[Dict[str, Any]] = []
-        trades: List[Dict[str, Any]] = []
-        decisions: List[Dict[str, Any]] = []
+        positions: dict[str, dict[str, float]] = {}  # symbol -> {qty, entry_price}
+        equity_curve: list[dict[str, Any]] = []
+        trades: list[dict[str, Any]] = []
+        decisions: list[dict[str, Any]] = []
 
         # Group data by timestamp for bar-by-bar processing
         if "timestamp" in data.columns:
@@ -127,12 +127,16 @@ class Backtester:
                 ts = pd.Timestamp(ts)
 
             # Get current bar prices
-            bar_data = data[data["timestamp"] == ts] if "timestamp" in data.columns else data.loc[ts:ts]
-            current_prices: Dict[str, float] = {}
+            bar_data = (
+                data[data["timestamp"] == ts] if "timestamp" in data.columns else data.loc[ts:ts]
+            )
+            current_prices: dict[str, float] = {}
             if "symbol" in bar_data.columns and "close" in bar_data.columns:
                 allowed_symbols = set(self._symbols)
                 mask = bar_data["symbol"].isin(allowed_symbols)
-                for sym, close in zip(bar_data.loc[mask, "symbol"], bar_data.loc[mask, "close"]):
+                for sym, close in zip(
+                    bar_data.loc[mask, "symbol"], bar_data.loc[mask, "close"], strict=False
+                ):
                     current_prices[str(sym)] = float(close)
             else:
                 for _, row in bar_data.iterrows():
@@ -150,22 +154,24 @@ class Backtester:
                 unrealized_pnl += (price - pos["entry_price"]) * pos["qty"]
 
             equity = balance + unrealized_pnl
-            equity_curve.append({
-                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                "equity": equity,
-                "balance": balance,
-                "unrealized_pnl": unrealized_pnl,
-            })
+            equity_curve.append(
+                {
+                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "equity": equity,
+                    "balance": balance,
+                    "unrealized_pnl": unrealized_pnl,
+                }
+            )
 
             # Decision point
             if bar_count % self._decision_every == 0 and ts_idx >= lookback:
                 # Get lookback window
                 start_idx = max(0, ts_idx - lookback)
-                window_timestamps = timestamps[start_idx:ts_idx + 1]
+                window_timestamps = timestamps[start_idx : ts_idx + 1]
                 if "timestamp" in data.columns:
                     window_data = data[data["timestamp"].isin(window_timestamps)]
                 else:
-                    window_data = data.iloc[start_idx:ts_idx + 1]
+                    window_data = data.iloc[start_idx : ts_idx + 1]
 
                 current_exposures = {}
                 for sym in self._symbols:
@@ -190,20 +196,24 @@ class Backtester:
                         action="HOLD",
                     )
 
-                decisions.append({
-                    "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                    "action": signal.action,
-                    "exposures": signal.exposures,
-                    "reasoning": signal.reasoning,
-                })
+                decisions.append(
+                    {
+                        "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                        "action": signal.action,
+                        "exposures": signal.exposures,
+                        "reasoning": signal.reasoning,
+                    }
+                )
 
                 if signal.action == "REBALANCE":
                     # Execute rebalancing
                     for sym in self._symbols:
                         target_exp = signal.exposures.get(sym, 0.0)
                         # Clip to limits
-                        target_exp = max(-self._config.per_symbol_max_exposure,
-                                        min(self._config.per_symbol_max_exposure, target_exp))
+                        target_exp = max(
+                            -self._config.per_symbol_max_exposure,
+                            min(self._config.per_symbol_max_exposure, target_exp),
+                        )
 
                         price = current_prices.get(sym)
                         if price is None or price <= 0 or equity <= 0:
@@ -219,40 +229,60 @@ class Backtester:
 
                         # Close existing position
                         if current_pos and abs(current_qty) > 1e-8:
-                            close_price = price * (1 - self._config.slippage if current_qty > 0 else 1 + self._config.slippage)
+                            close_price = price * (
+                                1 - self._config.slippage
+                                if current_qty > 0
+                                else 1 + self._config.slippage
+                            )
                             realized = (close_price - current_pos["entry_price"]) * current_qty
-                            commission = abs(current_qty * close_price) * self._config.commission_rate
+                            commission = (
+                                abs(current_qty * close_price) * self._config.commission_rate
+                            )
                             balance += realized - commission
-                            trades.append({
-                                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                                "symbol": sym,
-                                "action": "close",
-                                "quantity": current_qty,
-                                "price": close_price,
-                                "realized_pnl": realized - commission,
-                                "commission": commission,
-                            })
+                            trades.append(
+                                {
+                                    "timestamp": ts.isoformat()
+                                    if hasattr(ts, "isoformat")
+                                    else str(ts),
+                                    "symbol": sym,
+                                    "action": "close",
+                                    "quantity": current_qty,
+                                    "price": close_price,
+                                    "realized_pnl": realized - commission,
+                                    "commission": commission,
+                                }
+                            )
                             self._strategy.on_trade_result(
-                                sym, realized - commission,
-                                current_pos["entry_price"], close_price,
+                                sym,
+                                realized - commission,
+                                current_pos["entry_price"],
+                                close_price,
                             )
                             del positions[sym]
 
                         # Open new position
                         if abs(target_qty) > 1e-8:
-                            open_price = price * (1 + self._config.slippage if target_qty > 0 else 1 - self._config.slippage)
+                            open_price = price * (
+                                1 + self._config.slippage
+                                if target_qty > 0
+                                else 1 - self._config.slippage
+                            )
                             commission = abs(target_qty * open_price) * self._config.commission_rate
                             balance -= commission
                             positions[sym] = {"qty": target_qty, "entry_price": open_price}
-                            trades.append({
-                                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                                "symbol": sym,
-                                "action": "open",
-                                "quantity": target_qty,
-                                "price": open_price,
-                                "realized_pnl": -commission,
-                                "commission": commission,
-                            })
+                            trades.append(
+                                {
+                                    "timestamp": ts.isoformat()
+                                    if hasattr(ts, "isoformat")
+                                    else str(ts),
+                                    "symbol": sym,
+                                    "action": "open",
+                                    "quantity": target_qty,
+                                    "price": open_price,
+                                    "realized_pnl": -commission,
+                                    "commission": commission,
+                                }
+                            )
 
         # Final mark-to-market
         final_unrealized = 0.0
@@ -288,8 +318,8 @@ class Backtester:
         )
 
     def _calculate_performance(
-        self, equity_curve: List[Dict], trades: List[Dict]
-    ) -> Dict[str, Any]:
+        self, equity_curve: list[dict], trades: list[dict]
+    ) -> dict[str, Any]:
         """Calculate performance metrics from backtest results."""
         if len(equity_curve) < 2:
             return {}
@@ -306,11 +336,12 @@ class Backtester:
             return {}
 
         import statistics
+
         avg_return = statistics.mean(returns)
         std_return = statistics.stdev(returns) if len(returns) > 1 else 0.0
 
         # Sharpe (annualized assuming minute bars, ~525600 bars/year)
-        sharpe = (avg_return / std_return * (525600 ** 0.5)) if std_return > 0 else 0.0
+        sharpe = (avg_return / std_return * (525600**0.5)) if std_return > 0 else 0.0
 
         # Max drawdown
         peak = equities[0]
@@ -329,14 +360,22 @@ class Backtester:
         # Profit factor
         gross_profit = sum(p for p in pnls if p > 0)
         gross_loss = abs(sum(p for p in pnls if p < 0))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss > 0
+            else float("inf")
+            if gross_profit > 0
+            else 0.0
+        )
 
         return {
             "sharpe_ratio": round(sharpe, 4),
             "max_drawdown": round(max_dd, 4),
             "win_rate": round(win_rate, 4),
             "profit_factor": round(profit_factor, 4),
-            "total_return": round((equities[-1] - equities[0]) / equities[0], 4) if equities[0] > 0 else 0,
+            "total_return": round((equities[-1] - equities[0]) / equities[0], 4)
+            if equities[0] > 0
+            else 0,
             "avg_return_per_bar": round(avg_return, 8),
             "volatility": round(std_return, 8),
             "num_trades": len(pnls),

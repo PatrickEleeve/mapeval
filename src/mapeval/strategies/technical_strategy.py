@@ -5,7 +5,7 @@ Pure rule-based strategies using technical indicators, without LLM involvement.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
@@ -18,17 +18,19 @@ class MACrossoverStrategy(Strategy):
     Goes long when short MA crosses above long MA, short when it crosses below.
     """
 
-    def __init__(self, short_window: int = 20, long_window: int = 50, exposure_size: float = 1.0, **kwargs) -> None:
+    def __init__(
+        self, short_window: int = 20, long_window: int = 50, exposure_size: float = 1.0, **kwargs
+    ) -> None:
         self._short_window = short_window
         self._long_window = long_window
         self._exposure_size = exposure_size
-        self._symbols: List[str] = []
+        self._symbols: list[str] = []
 
     @property
     def name(self) -> str:
         return "ma_crossover"
 
-    def initialize(self, symbols: List[str], config: Dict[str, Any]) -> None:
+    def initialize(self, symbols: list[str], config: dict[str, Any]) -> None:
         self._symbols = symbols
         self._short_window = config.get("short_window", self._short_window)
         self._long_window = config.get("long_window", self._long_window)
@@ -39,7 +41,7 @@ class MACrossoverStrategy(Strategy):
         timestamp: pd.Timestamp,
         market_data: pd.DataFrame,
         tools: Any,
-        current_positions: Dict[str, float],
+        current_positions: dict[str, float],
     ) -> StrategySignal:
         exposures = {}
         reasoning_parts = []
@@ -55,10 +57,14 @@ class MACrossoverStrategy(Strategy):
 
                 if ma_short > ma_long:
                     exposures[symbol] = self._exposure_size
-                    reasoning_parts.append(f"{symbol}: LONG (MA{self._short_window}>{self._long_window})")
+                    reasoning_parts.append(
+                        f"{symbol}: LONG (MA{self._short_window}>{self._long_window})"
+                    )
                 elif ma_short < ma_long:
                     exposures[symbol] = -self._exposure_size
-                    reasoning_parts.append(f"{symbol}: SHORT (MA{self._short_window}<{self._long_window})")
+                    reasoning_parts.append(
+                        f"{symbol}: SHORT (MA{self._short_window}<{self._long_window})"
+                    )
                 else:
                     exposures[symbol] = 0.0
             except Exception:
@@ -71,7 +77,7 @@ class MACrossoverStrategy(Strategy):
             reasoning="; ".join(reasoning_parts) if reasoning_parts else "No MA signals",
         )
 
-    def get_parameters(self) -> Dict[str, Any]:
+    def get_parameters(self) -> dict[str, Any]:
         return {
             "name": "ma_crossover",
             "short_window": self._short_window,
@@ -96,13 +102,13 @@ class RSIMeanReversionStrategy(Strategy):
         self._oversold = oversold
         self._overbought = overbought
         self._exposure_size = exposure_size
-        self._symbols: List[str] = []
+        self._symbols: list[str] = []
 
     @property
     def name(self) -> str:
         return "rsi_mean_reversion"
 
-    def initialize(self, symbols: List[str], config: Dict[str, Any]) -> None:
+    def initialize(self, symbols: list[str], config: dict[str, Any]) -> None:
         self._symbols = symbols
         self._oversold = config.get("oversold", self._oversold)
         self._overbought = config.get("overbought", self._overbought)
@@ -112,7 +118,7 @@ class RSIMeanReversionStrategy(Strategy):
         timestamp: pd.Timestamp,
         market_data: pd.DataFrame,
         tools: Any,
-        current_positions: Dict[str, float],
+        current_positions: dict[str, float],
     ) -> StrategySignal:
         exposures = {}
         reasoning_parts = []
@@ -143,7 +149,7 @@ class RSIMeanReversionStrategy(Strategy):
             reasoning="; ".join(reasoning_parts) if reasoning_parts else "No RSI signals",
         )
 
-    def get_parameters(self) -> Dict[str, Any]:
+    def get_parameters(self) -> dict[str, Any]:
         return {
             "name": "rsi_mean_reversion",
             "oversold": self._oversold,

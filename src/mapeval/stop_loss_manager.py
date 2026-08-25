@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
 from enum import Enum
 
 import pandas as pd
@@ -26,18 +25,18 @@ class StopLossLevel:
     created_at: pd.Timestamp
 
 
-@dataclass 
+@dataclass
 class StopLossManager:
     atr_multiplier: float = 2.0
     trailing_activation_pct: float = 0.01
-    stop_levels: Dict[str, StopLossLevel] = field(default_factory=dict)
-    
+    stop_levels: dict[str, StopLossLevel] = field(default_factory=dict)
+
     def calculate_initial_stop(
         self,
         symbol: str,
         entry_price: float,
         position_side: str,
-        atr_value: Optional[float],
+        atr_value: float | None,
         timestamp: pd.Timestamp,
     ) -> float:
         if atr_value is None or atr_value <= 0:
@@ -52,7 +51,7 @@ class StopLossManager:
                 stop_price = entry_price - stop_distance
             else:
                 stop_price = entry_price + stop_distance
-        
+
         self.stop_levels[symbol] = StopLossLevel(
             symbol=symbol,
             stop_price=stop_price,
@@ -62,50 +61,50 @@ class StopLossManager:
             highest_favorable=entry_price,
             created_at=timestamp,
         )
-        
+
         return stop_price
-    
+
     def update_trailing_stop(
         self,
         symbol: str,
         current_price: float,
         position_side: str,
-        atr_value: Optional[float],
-    ) -> Optional[float]:
+        atr_value: float | None,
+    ) -> float | None:
         if symbol not in self.stop_levels:
             return None
-        
+
         level = self.stop_levels[symbol]
-        
+
         if position_side == "long":
             if current_price > level.highest_favorable:
                 level.highest_favorable = current_price
-                
+
                 profit_pct = (current_price - level.initial_entry) / level.initial_entry
                 if profit_pct >= self.trailing_activation_pct:
                     if atr_value and atr_value > 0:
                         new_stop = current_price - (atr_value * self.atr_multiplier)
                     else:
                         new_stop = current_price * 0.98
-                    
+
                     if new_stop > level.stop_price:
                         level.stop_price = new_stop
         else:
             if current_price < level.highest_favorable:
                 level.highest_favorable = current_price
-                
+
                 profit_pct = (level.initial_entry - current_price) / level.initial_entry
                 if profit_pct >= self.trailing_activation_pct:
                     if atr_value and atr_value > 0:
                         new_stop = current_price + (atr_value * self.atr_multiplier)
                     else:
                         new_stop = current_price * 1.02
-                    
+
                     if new_stop < level.stop_price:
                         level.stop_price = new_stop
-        
+
         return level.stop_price
-    
+
     def check_stop_triggered(
         self,
         symbol: str,
@@ -114,27 +113,26 @@ class StopLossManager:
     ) -> bool:
         if symbol not in self.stop_levels:
             return False
-        
+
         level = self.stop_levels[symbol]
-        
+
         if position_side == "long":
             return current_price <= level.stop_price
-        else:
-            return current_price >= level.stop_price
-    
-    def get_stop_price(self, symbol: str) -> Optional[float]:
+        return current_price >= level.stop_price
+
+    def get_stop_price(self, symbol: str) -> float | None:
         if symbol not in self.stop_levels:
             return None
         return self.stop_levels[symbol].stop_price
-    
+
     def remove_stop(self, symbol: str) -> None:
         if symbol in self.stop_levels:
             del self.stop_levels[symbol]
-    
-    def get_all_stops(self) -> Dict[str, float]:
+
+    def get_all_stops(self) -> dict[str, float]:
         return {sym: level.stop_price for sym, level in self.stop_levels.items()}
-    
-    def get_stop_info(self, symbol: str) -> Optional[Dict]:
+
+    def get_stop_info(self, symbol: str) -> dict | None:
         if symbol not in self.stop_levels:
             return None
         level = self.stop_levels[symbol]

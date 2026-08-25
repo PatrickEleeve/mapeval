@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
 
 import pandas as pd
 
 
 def generate_mock_klines(
-    symbols: List[str],
+    symbols: list[str],
     interval: str = "1m",
     lookback: int = 500,
-    base_prices: Dict[str, float] | None = None,
+    base_prices: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Generate realistic mock OHLCV data for testing.
 
@@ -39,8 +38,15 @@ def generate_mock_klines(
 
     # Interval to minutes
     interval_minutes = {
-        "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-        "1h": 60, "2h": 120, "4h": 240, "1d": 1440,
+        "1m": 1,
+        "3m": 3,
+        "5m": 5,
+        "15m": 15,
+        "30m": 30,
+        "1h": 60,
+        "2h": 120,
+        "4h": 240,
+        "1d": 1440,
     }.get(interval, 1)
 
     rows = []
@@ -72,15 +78,17 @@ def generate_mock_klines(
             base_volume = {"BTCUSDT": 1000, "ETHUSDT": 5000}.get(symbol, 10000)
             volume = base_volume * random.uniform(0.5, 2.0)
 
-            rows.append({
-                "timestamp": ts,
-                "symbol": symbol,
-                "open": round(open_price, 2),
-                "high": round(high_price, 2),
-                "low": round(low_price, 2),
-                "close": round(close_price, 2),
-                "volume": round(volume, 2),
-            })
+            rows.append(
+                {
+                    "timestamp": ts,
+                    "symbol": symbol,
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "volume": round(volume, 2),
+                }
+            )
 
     df = pd.DataFrame(rows)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -92,7 +100,7 @@ class MockMarketData:
 
     def __init__(
         self,
-        symbols: List[str],
+        symbols: list[str],
         interval: str = "1m",
         lookback: int = 500,
     ):
@@ -111,7 +119,7 @@ class MockMarketData:
             if not symbol_df.empty:
                 self._prices[symbol] = symbol_df.iloc[-1]["close"]
 
-    def fetch_latest_prices(self) -> Dict[str, float]:
+    def fetch_latest_prices(self) -> dict[str, float]:
         """Simulate fetching latest prices with small random movement."""
         for symbol in self.symbols:
             current = self._prices.get(symbol, 100.0)
@@ -119,10 +127,10 @@ class MockMarketData:
             self._prices[symbol] = max(1.0, current + random.gauss(0, volatility))
         return self._prices.copy()
 
-    def latest_prices(self) -> Dict[str, float]:
+    def latest_prices(self) -> dict[str, float]:
         return self._prices.copy()
 
-    def append_prices(self, prices: Dict[str, float], timestamp) -> None:
+    def append_prices(self, prices: dict[str, float], timestamp) -> None:
         """Append new prices to history."""
         self._prices.update(prices)
 
@@ -130,7 +138,7 @@ class MockMarketData:
         """Return recent OHLCV data."""
         return self._df.tail(window * len(self.symbols)).copy()
 
-    def refresh_funding_rates(self, throttle_seconds: int = 0) -> Dict[str, float]:
+    def refresh_funding_rates(self, throttle_seconds: int = 0) -> dict[str, float]:
         """Return mock funding rates."""
         return {symbol: random.uniform(-0.001, 0.001) for symbol in self.symbols}
 

@@ -3,17 +3,16 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Dict, List, Optional
 
 
 class BinanceSpotWS:
-    def __init__(self, symbols: List[str], base_ws: str = "wss://stream.binance.com:9443") -> None:
+    def __init__(self, symbols: list[str], base_ws: str = "wss://stream.binance.com:9443") -> None:
         self.symbols = [s.upper() for s in symbols]
         self.base_ws = base_ws.rstrip("/")
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._connected = threading.Event()
-        self._prices: Dict[str, float] = {}
+        self._prices: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -28,7 +27,7 @@ class BinanceSpotWS:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
 
-    def get_latest_prices(self) -> Dict[str, float]:
+    def get_latest_prices(self) -> dict[str, float]:
         with self._lock:
             return dict(self._prices)
 
@@ -41,7 +40,7 @@ class BinanceSpotWS:
         stream_names = [f"{s.lower()}@miniTicker" for s in self.symbols]
         url = f"{self.base_ws}/stream?streams={'/'.join(stream_names)}"
 
-        def on_message(_ws, message: str) -> None:  # noqa: N803
+        def on_message(_ws, message: str) -> None:
             try:
                 obj = json.loads(message)
             except Exception:
@@ -63,13 +62,13 @@ class BinanceSpotWS:
             with self._lock:
                 self._prices[symbol] = price
 
-        def on_open(_ws) -> None:  # noqa: N803
+        def on_open(_ws) -> None:
             self._connected.set()
 
-        def on_error(_ws, _err) -> None:  # noqa: N803
+        def on_error(_ws, _err) -> None:
             pass
 
-        def on_close(_ws, _code, _msg) -> None:  # noqa: N803
+        def on_close(_ws, _code, _msg) -> None:
             self._connected.clear()
 
         while not self._stop.is_set():
@@ -87,5 +86,3 @@ class BinanceSpotWS:
             if self._stop.is_set():
                 break
             time.sleep(1.0)
-
-

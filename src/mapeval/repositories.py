@@ -10,12 +10,14 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
 try:
     from sqlalchemy.orm import Session
+
     from mapeval.db_models import (
         SQLALCHEMY_AVAILABLE,
         DecisionRecord,
@@ -54,9 +56,11 @@ class SessionRepository(BaseRepository):
         self,
         initial_capital: float,
         execution_mode: str = "simulation",
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> str:
-        session_id = f"session_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        session_id = (
+            f"session_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        )
         record = SessionRecord(
             session_id=session_id,
             start_time=datetime.now(timezone.utc),
@@ -69,7 +73,9 @@ class SessionRepository(BaseRepository):
         self._session.flush()
         return session_id
 
-    def complete(self, session_id: str, final_equity: float, total_pnl: float, total_trades: int) -> None:
+    def complete(
+        self, session_id: str, final_equity: float, total_pnl: float, total_trades: int
+    ) -> None:
         record = self._session.query(SessionRecord).filter_by(session_id=session_id).first()
         if record:
             record.end_time = datetime.now(timezone.utc)
@@ -84,13 +90,13 @@ class SessionRepository(BaseRepository):
             record.end_time = datetime.now(timezone.utc)
             record.status = "crashed"
 
-    def get(self, session_id: str) -> Optional[SessionRecord]:
+    def get(self, session_id: str) -> SessionRecord | None:
         return self._session.query(SessionRecord).filter_by(session_id=session_id).first()
 
-    def get_incomplete(self) -> List[SessionRecord]:
+    def get_incomplete(self) -> list[SessionRecord]:
         return self._session.query(SessionRecord).filter_by(status="running").all()
 
-    def list_recent(self, limit: int = 20) -> List[SessionRecord]:
+    def list_recent(self, limit: int = 20) -> list[SessionRecord]:
         return (
             self._session.query(SessionRecord)
             .order_by(SessionRecord.start_time.desc())
@@ -102,7 +108,7 @@ class SessionRepository(BaseRepository):
 class TradeRepository(BaseRepository):
     """CRUD operations for trade records."""
 
-    def save(self, session_id: str, trade: Dict[str, Any]) -> int:
+    def save(self, session_id: str, trade: dict[str, Any]) -> int:
         record = TradeRecord(
             session_id=session_id,
             timestamp=self._parse_timestamp(trade["timestamp"]),
@@ -119,14 +125,14 @@ class TradeRepository(BaseRepository):
         self._session.flush()
         return record.id
 
-    def save_batch(self, session_id: str, trades: List[Dict[str, Any]]) -> int:
+    def save_batch(self, session_id: str, trades: list[dict[str, Any]]) -> int:
         count = 0
         for trade in trades:
             self.save(session_id, trade)
             count += 1
         return count
 
-    def get_by_session(self, session_id: str, limit: int = 1000) -> List[TradeRecord]:
+    def get_by_session(self, session_id: str, limit: int = 1000) -> list[TradeRecord]:
         return (
             self._session.query(TradeRecord)
             .filter_by(session_id=session_id)
@@ -135,7 +141,7 @@ class TradeRepository(BaseRepository):
             .all()
         )
 
-    def get_by_symbol(self, session_id: str, symbol: str) -> List[TradeRecord]:
+    def get_by_symbol(self, session_id: str, symbol: str) -> list[TradeRecord]:
         return (
             self._session.query(TradeRecord)
             .filter_by(session_id=session_id, symbol=symbol)
@@ -147,7 +153,7 @@ class TradeRepository(BaseRepository):
 class DecisionRepository(BaseRepository):
     """CRUD operations for decision records."""
 
-    def save(self, session_id: str, decision: Dict[str, Any]) -> int:
+    def save(self, session_id: str, decision: dict[str, Any]) -> int:
         record = DecisionRecord(
             session_id=session_id,
             timestamp=self._parse_timestamp(decision["timestamp"]),
@@ -164,7 +170,7 @@ class DecisionRepository(BaseRepository):
         self._session.flush()
         return record.id
 
-    def get_by_session(self, session_id: str, limit: int = 500) -> List[DecisionRecord]:
+    def get_by_session(self, session_id: str, limit: int = 500) -> list[DecisionRecord]:
         return (
             self._session.query(DecisionRecord)
             .filter_by(session_id=session_id)
@@ -177,7 +183,7 @@ class DecisionRepository(BaseRepository):
 class EquityRepository(BaseRepository):
     """CRUD operations for equity snapshots."""
 
-    def save(self, session_id: str, snapshot: Dict[str, Any]) -> int:
+    def save(self, session_id: str, snapshot: dict[str, Any]) -> int:
         ts = self._parse_timestamp(snapshot["timestamp"])
 
         record = EquitySnapshot(
@@ -192,7 +198,7 @@ class EquityRepository(BaseRepository):
         self._session.flush()
         return record.id
 
-    def get_by_session(self, session_id: str) -> List[EquitySnapshot]:
+    def get_by_session(self, session_id: str) -> list[EquitySnapshot]:
         return (
             self._session.query(EquitySnapshot)
             .filter_by(session_id=session_id)
@@ -204,7 +210,7 @@ class EquityRepository(BaseRepository):
 class OrderRepository(BaseRepository):
     """CRUD operations for order records."""
 
-    def save(self, session_id: str, order_data: Dict[str, Any]) -> int:
+    def save(self, session_id: str, order_data: dict[str, Any]) -> int:
         record = OrderRecord(
             session_id=session_id,
             client_order_id=order_data.get("client_order_id", str(uuid.uuid4())[:16]),
@@ -229,7 +235,13 @@ class OrderRepository(BaseRepository):
 class RiskEventRepository(BaseRepository):
     """CRUD operations for risk events."""
 
-    def save(self, session_id: str, event_type: str, severity: str = "warning", details: Optional[Dict[str, Any]] = None) -> int:
+    def save(
+        self,
+        session_id: str,
+        event_type: str,
+        severity: str = "warning",
+        details: dict[str, Any] | None = None,
+    ) -> int:
         record = RiskEvent(
             session_id=session_id,
             timestamp=datetime.now(timezone.utc),
@@ -241,7 +253,7 @@ class RiskEventRepository(BaseRepository):
         self._session.flush()
         return record.id
 
-    def get_by_session(self, session_id: str) -> List[RiskEvent]:
+    def get_by_session(self, session_id: str) -> list[RiskEvent]:
         return (
             self._session.query(RiskEvent)
             .filter_by(session_id=session_id)

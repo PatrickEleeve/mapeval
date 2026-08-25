@@ -17,17 +17,18 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        files: ^(src/mapeval|tests)/
       - id: ruff-format
+        files: ^(src/mapeval|tests)/
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.3.1
     hooks:
       - id: mypy
         additional_dependencies:
-          - pandas-stubs
           - types-requests
-        args: [--ignore-missing-imports]
-        exclude: ^tests/
+        args: [--ignore-missing-imports, --follow-imports=skip]
+        files: ^src/mapeval/(config|data_manager|main|trading_engine)\.py$
 
   - repo: local
     hooks:

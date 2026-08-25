@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -13,11 +13,11 @@ import pandas as pd
 class StrategySignal:
     """Output from a strategy's signal generation."""
 
-    exposures: Dict[str, float]           # Symbol -> target leverage
-    action: str = "REBALANCE"             # HOLD or REBALANCE
-    confidence: float = 0.5               # 0-1 confidence level
-    reasoning: str = ""                   # Human-readable explanation
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    exposures: dict[str, float]  # Symbol -> target leverage
+    action: str = "REBALANCE"  # HOLD or REBALANCE
+    confidence: float = 0.5  # 0-1 confidence level
+    reasoning: str = ""  # Human-readable explanation
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Strategy(ABC):
@@ -30,7 +30,7 @@ class Strategy(ABC):
         ...
 
     @abstractmethod
-    def initialize(self, symbols: List[str], config: Dict[str, Any]) -> None:
+    def initialize(self, symbols: list[str], config: dict[str, Any]) -> None:
         """Initialize the strategy with symbols and configuration."""
         ...
 
@@ -40,7 +40,7 @@ class Strategy(ABC):
         timestamp: pd.Timestamp,
         market_data: pd.DataFrame,
         tools: Any,
-        current_positions: Dict[str, float],
+        current_positions: dict[str, float],
     ) -> StrategySignal:
         """Generate trading signals based on current market state.
 
@@ -57,10 +57,11 @@ class Strategy(ABC):
         """
         ...
 
-    def on_trade_result(self, symbol: str, pnl: float, entry_price: float, exit_price: float) -> None:
+    def on_trade_result(
+        self, symbol: str, pnl: float, entry_price: float, exit_price: float
+    ) -> None:
         """Callback when a trade is completed. Override for learning strategies."""
-        pass
 
-    def get_parameters(self) -> Dict[str, Any]:
+    def get_parameters(self) -> dict[str, Any]:
         """Return current strategy parameters for logging/serialization."""
         return {}

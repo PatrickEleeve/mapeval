@@ -5,7 +5,7 @@ Wraps the existing LLMAgent to conform to the Strategy interface.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pandas as pd
 
@@ -17,14 +17,14 @@ class LLMStrategy(Strategy):
 
     def __init__(self, agent=None, **kwargs) -> None:
         self._agent = agent
-        self._symbols: List[str] = []
-        self._config: Dict[str, Any] = kwargs
+        self._symbols: list[str] = []
+        self._config: dict[str, Any] = kwargs
 
     @property
     def name(self) -> str:
         return "llm"
 
-    def initialize(self, symbols: List[str], config: Dict[str, Any]) -> None:
+    def initialize(self, symbols: list[str], config: dict[str, Any]) -> None:
         self._symbols = symbols
         self._config.update(config)
 
@@ -33,11 +33,11 @@ class LLMStrategy(Strategy):
         timestamp: pd.Timestamp,
         market_data: pd.DataFrame,
         tools: Any,
-        current_positions: Dict[str, float],
+        current_positions: dict[str, float],
     ) -> StrategySignal:
         if self._agent is None:
             return StrategySignal(
-                exposures={s: 0.0 for s in self._symbols},
+                exposures=dict.fromkeys(self._symbols, 0.0),
                 action="HOLD",
                 reasoning="No LLM agent configured",
             )
@@ -52,12 +52,12 @@ class LLMStrategy(Strategy):
             )
         except Exception as exc:
             return StrategySignal(
-                exposures={s: 0.0 for s in self._symbols},
+                exposures=dict.fromkeys(self._symbols, 0.0),
                 action="HOLD",
                 reasoning=f"LLM error: {exc}",
             )
 
-    def get_parameters(self) -> Dict[str, Any]:
+    def get_parameters(self) -> dict[str, Any]:
         return {
             "name": "llm",
             "provider": self._config.get("provider", "unknown"),

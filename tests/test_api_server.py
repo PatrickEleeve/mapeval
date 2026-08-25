@@ -5,11 +5,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
 from mapeval.api_server import FASTAPI_AVAILABLE
+
 
 if FASTAPI_AVAILABLE:
     from fastapi.testclient import TestClient
@@ -18,7 +20,6 @@ if FASTAPI_AVAILABLE:
     from mapeval.api_server import create_app, set_api_token, set_engine
     from mapeval.security import ReadOnlyGuard
 
-
     class DummyAccount:
         balance = 1000.0
         equity = 1000.0
@@ -26,8 +27,9 @@ if FASTAPI_AVAILABLE:
         unrealized_pnl = 0.0
         margin_used = 0.0
         available_margin = 1000.0
-        positions = {}
 
+        def __init__(self) -> None:
+            self.positions = {}
 
     class DummyEngine:
         def __init__(self) -> None:
@@ -57,7 +59,11 @@ if FASTAPI_AVAILABLE:
         def activate_kill_switch(self, reason: str = "api", close_positions: bool = False):
             self._kill_switch_active = True
             self.read_only_guard.enable()
-            return {"kill_switch_active": True, "read_only": True, "positions_closed": close_positions}
+            return {
+                "kill_switch_active": True,
+                "read_only": True,
+                "positions_closed": close_positions,
+            }
 
         def release_kill_switch(self):
             self._kill_switch_active = False
@@ -66,7 +72,6 @@ if FASTAPI_AVAILABLE:
 
         def shutdown(self):
             self._shutdown_requested = True
-
 
     def test_control_endpoints_toggle_state():
         set_engine(DummyEngine())
@@ -116,9 +121,8 @@ if FASTAPI_AVAILABLE:
         set_api_token("secret-token")
         client = TestClient(create_app())
 
-        with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect("/ws/stream"):
-                pass
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect("/ws/stream"):
+            pass
 
         with client.websocket_connect("/ws/stream?token=secret-token") as websocket:
             message = websocket.receive_json()
@@ -128,5 +132,6 @@ if FASTAPI_AVAILABLE:
 
 
 else:
+
     def test_fastapi_optional_dependency():
         pytest.skip("fastapi not installed")

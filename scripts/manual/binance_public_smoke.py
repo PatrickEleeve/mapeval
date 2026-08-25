@@ -9,14 +9,15 @@ from __future__ import annotations
 import json
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
 from urllib import error, request
+
 
 BASE_URL = "https://api1.binance.com"
 
 # Public, read-only endpoints that do not require an API key.
-PUBLIC_ENDPOINTS: Sequence[Tuple[str, str]] = (
+PUBLIC_ENDPOINTS: Sequence[tuple[str, str]] = (
     ("Ping", "/api/v3/ping"),
     ("Server Time", "/api/v3/time"),
     ("Exchange Info (BTCUSDT)", "/api/v3/exchangeInfo?symbol=BTCUSDT"),
@@ -113,8 +114,8 @@ def probe_endpoint(name: str, path: str, timeout: float = DEFAULT_TIMEOUT) -> En
         )
 
 
-def run_tests(endpoints: Sequence[Tuple[str, str]]) -> List[EndpointResult]:
-    results: List[EndpointResult] = []
+def run_tests(endpoints: Sequence[tuple[str, str]]) -> list[EndpointResult]:
+    results: list[EndpointResult] = []
     for name, path in endpoints:
         results.append(probe_endpoint(name, path))
     return results

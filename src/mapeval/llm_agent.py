@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
 from mapeval.exposure_utils import compute_fallback_exposures, sanitize_exposures
+
 
 try:
     from openai import OpenAI
@@ -70,7 +71,7 @@ OPTION 2 - REBALANCE (only when truly necessary):
 **WHEN TO HOLD (default) vs REBALANCE**
 HOLD when:
 - No dramatic change in indicators since last decision
-- Current positions are still aligned with market direction  
+- Current positions are still aligned with market direction
 - RSI/MACD signals are ambiguous or unchanged
 - Cost of rebalancing > expected benefit
 
@@ -101,24 +102,24 @@ _SUPPORTED_INDICATORS = {
 @dataclass
 class LLMAgent:
     api_key: str
-    config: Dict[str, Any]
-    symbols: Optional[List[str]] = None
+    config: dict[str, Any]
+    symbols: list[str] | None = None
     max_leverage: float = 50.0
     per_symbol_max_exposure: float = 50.0
     max_exposure_delta: float = 50.0
     min_abs_exposure: float = 0.0
     provider: str = "openai"
-    base_url: Optional[str] = None
-    indicators: Optional[List[str]] = None
-    gross_leverage_cap: Optional[float] = None
-    net_exposure_cap: Optional[float] = None
-    max_open_positions: Optional[int] = None
-    max_turnover_per_step: Optional[float] = None
+    base_url: str | None = None
+    indicators: list[str] | None = None
+    gross_leverage_cap: float | None = None
+    net_exposure_cap: float | None = None
+    max_open_positions: int | None = None
+    max_turnover_per_step: float | None = None
     min_confidence_threshold: float = 0.3
     _system_prompt: str = field(init=False)
-    _last_exposures: Dict[str, float] = field(init=False, default_factory=dict)
-    last_sanitization_notes: List[str] = field(init=False, default_factory=list)
-    last_position_details: List[Dict[str, Any]] = field(init=False, default_factory=list)
+    _last_exposures: dict[str, float] = field(init=False, default_factory=dict)
+    last_sanitization_notes: list[str] = field(init=False, default_factory=list)
+    last_position_details: list[dict[str, Any]] = field(init=False, default_factory=list)
     last_overall_confidence: float = field(init=False, default=0.0)
     last_action: str = field(init=False, default="HOLD")
 
@@ -130,9 +131,14 @@ class LLMAgent:
         if self.max_leverage > 0.0:
             self.per_symbol_max_exposure = min(self.per_symbol_max_exposure, self.max_leverage)
         self.per_symbol_max_exposure = max(0.0, self.per_symbol_max_exposure)
-        self.max_exposure_delta = float(self.max_exposure_delta or self.per_symbol_max_exposure or self.max_leverage)
-        self.max_exposure_delta = max(0.0, min(self.max_exposure_delta, self.per_symbol_max_exposure or self.max_exposure_delta))
-        
+        self.max_exposure_delta = float(
+            self.max_exposure_delta or self.per_symbol_max_exposure or self.max_leverage
+        )
+        self.max_exposure_delta = max(
+            0.0,
+            min(self.max_exposure_delta, self.per_symbol_max_exposure or self.max_exposure_delta),
+        )
+
         if self.gross_leverage_cap is None:
             self.gross_leverage_cap = self.max_leverage
         if self.net_exposure_cap is None:
@@ -141,15 +147,15 @@ class LLMAgent:
             self.max_open_positions = len(self.symbols)
         if self.max_turnover_per_step is None:
             self.max_turnover_per_step = self.max_leverage * 2
-        
+
         self.last_reasoning: str = ""
         self.last_indicator_snapshot: str = ""
         self.last_sanitization_notes = []
         self.last_position_details = []
         self.last_overall_confidence = 0.0
         self.last_action = "HOLD"
-        self._last_exposures = {symbol: 0.0 for symbol in self.symbols}
-        self._client: Optional[Any] = None
+        self._last_exposures = dict.fromkeys(self.symbols, 0.0)
+        self._client: Any | None = None
         self._system_prompt = self._build_system_prompt()
 
         if OpenAI is None:
@@ -164,9 +170,11 @@ class LLMAgent:
         if not api_key:
             return
 
-        client_kwargs: Dict[str, Any] = {"api_key": api_key}
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
         if provider == "deepseek":
-            client_kwargs["base_url"] = self.base_url or self.config.get("base_url") or "https://api.deepseek.com"
+            client_kwargs["base_url"] = (
+                self.base_url or self.config.get("base_url") or "https://api.deepseek.com"
+            )
         elif self.base_url:
             client_kwargs["base_url"] = self.base_url
 
@@ -183,7 +191,9 @@ class LLMAgent:
             per_symbol_cap=self.per_symbol_max_exposure if self.per_symbol_max_exposure > 0 else 0,
             gross_leverage_cap=self.gross_leverage_cap if self.gross_leverage_cap > 0 else 0,
             net_exposure_cap=self.net_exposure_cap if self.net_exposure_cap > 0 else 0,
-            max_positions=self.max_open_positions if self.max_open_positions > 0 else len(self.symbols),
+            max_positions=self.max_open_positions
+            if self.max_open_positions > 0
+            else len(self.symbols),
             max_turnover=self.max_turnover_per_step if self.max_turnover_per_step > 0 else 0,
             max_delta=self.max_exposure_delta if self.max_exposure_delta > 0 else 0,
         )
@@ -191,13 +201,13 @@ class LLMAgent:
     def _format_structured_indicators(self, current_time: pd.Timestamp, tools: Any) -> str:
         if not self.indicators:
             return ""
-        
+
         lines = ["```json", "{"]
         symbol_data = []
-        
+
         for symbol in self.symbols:
             metrics = {}
-            
+
             if "rsi" in self.indicators:
                 rsi = self._call_tool(tools, "calculate_rsi", symbol, current_time, 14)
                 if rsi is not None:
@@ -208,7 +218,7 @@ class LLMAgent:
                         metrics["rsi_signal"] = "OVERBOUGHT"
                     else:
                         metrics["rsi_signal"] = "NEUTRAL"
-            
+
             if "macd" in self.indicators:
                 macd = self._call_tool(tools, "calculate_macd", symbol, current_time)
                 if isinstance(macd, dict):
@@ -221,34 +231,36 @@ class LLMAgent:
                         metrics["macd_trend"] = "BEARISH"
                     else:
                         metrics["macd_trend"] = "NEUTRAL"
-            
+
             if "atr" in self.indicators:
                 atr = self._call_tool(tools, "calculate_atr", symbol, current_time, 14)
                 price = self._call_tool(tools, "calculate_moving_average", symbol, current_time, 1)
                 if atr is not None and price is not None and price > 0:
                     metrics["atr_14"] = round(atr, 6)
                     metrics["atr_pct"] = round(atr / price * 100, 2)
-            
+
             if "bollinger_bands" in self.indicators:
-                bands = self._call_tool(tools, "calculate_bollinger_bands", symbol, current_time, 20, 2.0)
+                bands = self._call_tool(
+                    tools, "calculate_bollinger_bands", symbol, current_time, 20, 2.0
+                )
                 if isinstance(bands, dict):
                     metrics["bb_upper"] = round(bands.get("upper", 0.0), 4)
                     metrics["bb_mid"] = round(bands.get("mid", 0.0), 4)
                     metrics["bb_lower"] = round(bands.get("lower", 0.0), 4)
                     if bands.get("bandwidth"):
                         metrics["bb_bandwidth"] = round(bands.get("bandwidth", 0.0), 4)
-            
+
             funding = self._call_tool(tools, "get_funding_rate", symbol)
             if funding is not None:
                 metrics["funding_rate"] = round(funding, 6)
-            
+
             if metrics:
                 symbol_data.append(f'  "{symbol}": {json.dumps(metrics)}')
-        
+
         lines.append(",\n".join(symbol_data))
         lines.append("}")
         lines.append("```")
-        
+
         return "\n".join(lines)
 
     def generate_trading_signal(
@@ -256,24 +268,28 @@ class LLMAgent:
         current_time: pd.Timestamp,
         market_data_slice: pd.DataFrame,
         available_tools: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         current_time = pd.to_datetime(current_time)
         if isinstance(current_time, pd.Timestamp) and current_time.tzinfo is not None:
             current_time = current_time.tz_convert(None)
-        
+
         timestamp_utc = (
-            current_time.tz_localize("UTC") if current_time.tzinfo is None else current_time.tz_convert("UTC")
+            current_time.tz_localize("UTC")
+            if current_time.tzinfo is None
+            else current_time.tz_convert("UTC")
         )
-        
+
         indicator_json = self._format_structured_indicators(current_time, available_tools)
         self.last_indicator_snapshot = indicator_json
-        
+
         current_positions = []
         for sym, exp in self._last_exposures.items():
             if abs(exp) > 1e-9:
                 current_positions.append(f"{sym}:{exp:+.2f}x")
-        current_pos_str = ", ".join(current_positions) if current_positions else "FLAT (no positions)"
-        
+        current_pos_str = (
+            ", ".join(current_positions) if current_positions else "FLAT (no positions)"
+        )
+
         user_prompt = f"""Current timestamp (UTC): {timestamp_utc}
 
 **Current positions:** {current_pos_str}
@@ -291,7 +307,7 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
 
         if self._client is not None:
             try:
-                request_kwargs: Dict[str, Any] = {
+                request_kwargs: dict[str, Any] = {
                     "model": self.config.get("model_name", "gpt-4-turbo"),
                     "temperature": self.config.get("temperature", 0.2),
                     "messages": [
@@ -304,7 +320,7 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
 
                 response = self._client.chat.completions.create(**request_kwargs)
                 content = response.choices[0].message.content if response.choices else ""
-                
+
                 parsed = json.loads(content)
                 exposures = self._parse_structured_response(parsed)
                 if exposures is not None:
@@ -314,79 +330,81 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
 
         return self._fallback_exposures(current_time, available_tools, market_data_slice)
 
-    def _parse_structured_response(self, parsed: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    def _parse_structured_response(self, parsed: dict[str, Any]) -> dict[str, float] | None:
         self.last_sanitization_notes = []
         self.last_position_details = []
-        
+
         action = str(parsed.get("action", "REBALANCE")).upper()
         self.last_action = action
         self.last_reasoning = str(parsed.get("reasoning", ""))
-        
+
         if action == "HOLD":
             self.last_sanitization_notes.append("LLM chose HOLD - keeping current positions")
             self.last_overall_confidence = 0.0
             return dict(self._last_exposures)
-        
+
         self.last_overall_confidence = float(parsed.get("overall_confidence", 0.0))
-        
+
         if self.last_overall_confidence < self.min_confidence_threshold:
             self.last_sanitization_notes.append(
                 f"Overall confidence {self.last_overall_confidence:.2f} < {self.min_confidence_threshold:.2f}, keeping positions"
             )
             return dict(self._last_exposures)
-        
+
         positions = parsed.get("positions", [])
         if isinstance(positions, dict):
             positions = [{"symbol": k, "exposure": v} for k, v in positions.items()]
-        
+
         if not positions:
             self.last_sanitization_notes.append("No positions in REBALANCE response, going flat")
-            exposures = {symbol: 0.0 for symbol in self.symbols}
+            exposures = dict.fromkeys(self.symbols, 0.0)
             self._last_exposures = dict(exposures)
             return exposures
-        
-        exposures: Dict[str, float] = {symbol: 0.0 for symbol in self.symbols}
-        
+
+        exposures: dict[str, float] = dict.fromkeys(self.symbols, 0.0)
+
         for pos in positions:
             symbol = str(pos.get("symbol", "")).upper()
             if symbol not in self.symbols:
                 self.last_sanitization_notes.append(f"Unknown symbol {symbol}, skipped")
                 continue
-            
+
             try:
                 exposure = float(pos.get("exposure", 0.0))
             except (TypeError, ValueError):
                 self.last_sanitization_notes.append(f"{symbol}: invalid exposure value")
                 continue
-            
+
             confidence = float(pos.get("confidence", 0.5))
             reason = str(pos.get("reason", ""))
-            
+
             if confidence < self.min_confidence_threshold:
                 self.last_sanitization_notes.append(
                     f"{symbol}: confidence {confidence:.2f} < {self.min_confidence_threshold:.2f}, zeroed"
                 )
                 continue
-            
+
             if len(reason.strip()) < 10:
                 self.last_sanitization_notes.append(
                     f"{symbol}: reason too short ({len(reason)} chars), scaling down 50%"
                 )
                 exposure *= 0.5
-            
-            self.last_position_details.append({
-                "symbol": symbol,
-                "exposure": exposure,
-                "confidence": confidence,
-                "reason": reason,
-            })
-            
+
+            self.last_position_details.append(
+                {
+                    "symbol": symbol,
+                    "exposure": exposure,
+                    "confidence": confidence,
+                    "reason": reason,
+                }
+            )
+
             exposures[symbol] = exposure
-        
+
         sanitized = self._sanitize_exposures(exposures)
         return sanitized
 
-    def _sanitize_exposures(self, exposures: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    def _sanitize_exposures(self, exposures: dict[str, Any]) -> dict[str, float] | None:
         result = sanitize_exposures(
             exposures=exposures,
             symbols=self.symbols,
@@ -405,7 +423,7 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
         current_date: pd.Timestamp,
         market_data_slice: pd.DataFrame,
         available_tools: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         return self.generate_trading_signal(current_date, market_data_slice, available_tools)
 
     @staticmethod
@@ -418,10 +436,10 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
         except Exception:
             return None
 
-    def _sanitize_indicators(self, values: Optional[List[str]]) -> List[str]:
+    def _sanitize_indicators(self, values: list[str] | None) -> list[str]:
         if not values:
             return []
-        normalized: List[str] = []
+        normalized: list[str] = []
         seen = set()
         for value in values:
             key = str(value).lower()
@@ -441,7 +459,7 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
         current_time: pd.Timestamp,
         available_tools: Any,
         market_data_slice: pd.DataFrame,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         raw_exposures = compute_fallback_exposures(
             symbols=self.symbols,
             current_time=current_time,
@@ -451,7 +469,7 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
 
         sanitized = self._sanitize_exposures(raw_exposures)
         if sanitized is None:
-            sanitized = {symbol: 0.0 for symbol in self.symbols}
+            sanitized = dict.fromkeys(self.symbols, 0.0)
             self._last_exposures = dict(sanitized)
 
         self.last_reasoning = "Deterministic fallback from MA momentum + volatility dampening."
@@ -461,10 +479,10 @@ Return your decision as JSON (HOLD or REBALANCE format)."""
 @dataclass
 class BaselineAgent:
     strategy: str
-    symbols: List[str]
+    symbols: list[str]
     max_leverage: float = 1.0
     last_reasoning: str = ""
-    last_sanitization_notes: List[str] = field(default_factory=list)
+    last_sanitization_notes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.last_reasoning = f"Baseline strategy: {self.strategy}"
@@ -474,7 +492,7 @@ class BaselineAgent:
         current_time: pd.Timestamp,
         market_data_slice: pd.DataFrame,
         available_tools: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         exposures = {}
         if self.strategy == "buy_hold":
             weight = 1.0 / len(self.symbols) if self.symbols else 0.0
@@ -483,6 +501,7 @@ class BaselineAgent:
 
         elif self.strategy == "random":
             import random
+
             for sym in self.symbols:
                 val = (random.random() - 0.5) * 2
                 exposures[sym] = val * (self.max_leverage / len(self.symbols))

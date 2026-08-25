@@ -103,10 +103,20 @@ ignore = [
     "B904",   # raise without from
     "RET504", # unnecessary assignment before return
     "SIM108", # ternary operator
+    "ARG001", # callback and protocol signatures intentionally retain arguments
+    "ARG002", # interface implementations intentionally retain arguments
+    "TC001",  # runtime imports keep optional dependencies and introspection predictable
+    "TC002",  # runtime imports keep optional dependencies and introspection predictable
+    "TC003",  # runtime imports keep optional dependencies and introspection predictable
+    "RUF001", # Chinese user-facing text intentionally uses full-width punctuation
+    "RUF002", # Chinese documentation intentionally uses full-width punctuation
+    "RUF003", # Chinese comments intentionally use full-width punctuation
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG001", "ARG002"]
+"src/mapeval/interfaces.py" = ["B027"]
+"src/mapeval/strategies/base.py" = ["B027"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["mapeval"]

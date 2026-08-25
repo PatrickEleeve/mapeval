@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Final, Iterable, List, Optional, Sequence
+from typing import Final
 
 import pandas as pd
 
@@ -28,7 +29,7 @@ from mapeval.binance_ws import BinanceSpotWS
 
 _START_DATE: Final = "2015-01-01"
 _END_DATE: Final = "2024-12-31"
-_INTERVAL_TO_FREQ: Dict[str, str] = {
+_INTERVAL_TO_FREQ: dict[str, str] = {
     "1m": "1min",
     "3m": "3min",
     "5m": "5min",
@@ -39,7 +40,7 @@ _INTERVAL_TO_FREQ: Dict[str, str] = {
     "4h": "4h",
     "1d": "B",
 }
-_INTERVAL_TO_SECONDS: Dict[str, float] = {
+_INTERVAL_TO_SECONDS: dict[str, float] = {
     "1s": 1.0,
     "1m": 60.0,
     "3m": 3 * 60.0,
@@ -60,7 +61,7 @@ _INTERVAL_TO_SECONDS: Dict[str, float] = {
 _MAX_HISTORY_FETCH_WORKERS: Final = 8
 
 
-def _klines_to_df(klines: List[List]) -> pd.DataFrame:
+def _klines_to_df(klines: list[list]) -> pd.DataFrame:
     """Convert Binance kline arrays to a DataFrame with timestamp and close price."""
     if not klines:
         return pd.DataFrame(columns=["Date", "Close"])
@@ -108,7 +109,7 @@ def _fetch_symbol_history(
 class BaseMarketData:
     """Shared interface and methods for market data providers."""
 
-    symbols: List[str]
+    symbols: list[str]
     lookback: int
     price_history: pd.DataFrame
 
@@ -118,7 +119,7 @@ class BaseMarketData:
         window = window.reset_index()
         return window
 
-    def latest_prices(self) -> Dict[str, float]:
+    def latest_prices(self) -> dict[str, float]:
         if self.price_history.empty:
             return {}
         last_row = self.price_history.iloc[-1]
@@ -160,7 +161,7 @@ def _parallel_fetch_symbol_frames(
     interval: str,
     lookback: int,
     base_urls: Sequence[str] | str,
-) -> List[pd.DataFrame]:
+) -> list[pd.DataFrame]:
     def fetch_for_symbol(symbol: str) -> pd.DataFrame:
         history = _fetch_symbol_history(symbol, interval, lookback, base_urls)
         return _prepare_history_frame(history, symbol)
@@ -192,15 +193,15 @@ class RealTimeMarketData(BaseMarketData):
         self._columns = [f"{symbol}_Close" for symbol in self.symbols]
         self.price_history = self._bootstrap_history()
         self._latest_prices_cache = self._extract_latest_prices(self.price_history)
-        self._ws: Optional[BinanceSpotWS] = None
-        self._funding_cache: Dict[str, float] = {}
-        self._last_funding_fetch_ts: Optional[pd.Timestamp] = None
+        self._ws: BinanceSpotWS | None = None
+        self._funding_cache: dict[str, float] = {}
+        self._last_funding_fetch_ts: pd.Timestamp | None = None
         self._consecutive_fetch_failures = 0
-        self._offline_until: Optional[float] = None
+        self._offline_until: float | None = None
         self._offline_backoff_seconds = 60.0
 
     @staticmethod
-    def _prepare_base_urls(base_url: Sequence[str] | str) -> List[str]:
+    def _prepare_base_urls(base_url: Sequence[str] | str) -> list[str]:
         if isinstance(base_url, (list, tuple, set)):
             candidates = list(base_url)
         else:
@@ -209,7 +210,7 @@ class RealTimeMarketData(BaseMarketData):
                 candidates = list(FALLBACK_BASES)
             else:
                 candidates = [focus]
-        normalized: List[str] = []
+        normalized: list[str] = []
         seen = set()
         for value in candidates:
             url = str(value).strip().rstrip("/")
@@ -228,11 +229,11 @@ class RealTimeMarketData(BaseMarketData):
         )
         return _merge_history_frames(frames, self._columns, lookback=self.lookback)
 
-    def _extract_latest_prices(self, history: pd.DataFrame) -> Dict[str, float]:
+    def _extract_latest_prices(self, history: pd.DataFrame) -> dict[str, float]:
         if history.empty:
             return {}
         last_row = history.iloc[-1]
-        latest: Dict[str, float] = {}
+        latest: dict[str, float] = {}
         for symbol in self.symbols:
             value = last_row.get(f"{symbol}_Close")
             if pd.notna(value):
@@ -251,7 +252,7 @@ class RealTimeMarketData(BaseMarketData):
         self.price_history = self._bootstrap_history()
         self._latest_prices_cache = self._extract_latest_prices(self.price_history)
 
-    def fetch_latest_prices(self) -> Dict[str, float]:
+    def fetch_latest_prices(self) -> dict[str, float]:
         """Retrieve the most recent ticker price for all configured symbols."""
         # Prefer websocket snapshot if running and populated
         if self._ws is not None:
@@ -269,7 +270,7 @@ class RealTimeMarketData(BaseMarketData):
             self._offline_until = None
             if isinstance(payload, dict):
                 payload = [payload]
-            prices: Dict[str, float] = {}
+            prices: dict[str, float] = {}
             for item in payload:
                 symbol = str(item.get("symbol"))
                 if symbol in self.symbols and "price" in item:
@@ -296,7 +297,7 @@ class RealTimeMarketData(BaseMarketData):
             self._ws.stop()
             self._ws = None
 
-    def refresh_funding_rates(self, throttle_seconds: int = 60) -> Dict[str, float]:
+    def refresh_funding_rates(self, throttle_seconds: int = 60) -> dict[str, float]:
         now = pd.Timestamp.utcnow().floor("s")
         if self._last_funding_fetch_ts is not None:
             delta = (now - self._last_funding_fetch_ts).total_seconds()
@@ -304,7 +305,7 @@ class RealTimeMarketData(BaseMarketData):
                 return dict(self._funding_cache)
         try:
             data = get_futures_premium_index()
-            cache: Dict[str, float] = {}
+            cache: dict[str, float] = {}
             if isinstance(data, list):
                 for item in data:
                     sym = str(item.get("symbol", "")).upper()
@@ -324,7 +325,9 @@ class RealTimeMarketData(BaseMarketData):
             pass
         return dict(self._funding_cache)
 
-    def append_prices(self, prices: Dict[str, float], timestamp: pd.Timestamp | None = None) -> None:
+    def append_prices(
+        self, prices: dict[str, float], timestamp: pd.Timestamp | None = None
+    ) -> None:
         """Append the newest price snapshot to the internal history buffer."""
         timestamp = self._normalize_timestamp(timestamp)
         history = self.price_history
@@ -334,7 +337,9 @@ class RealTimeMarketData(BaseMarketData):
                 for symbol in self.symbols
                 if symbol in prices and prices[symbol] is not None
             }
-            self.price_history = pd.DataFrame([row], index=pd.DatetimeIndex([timestamp], name="Date"))
+            self.price_history = pd.DataFrame(
+                [row], index=pd.DatetimeIndex([timestamp], name="Date")
+            )
             self.price_history = self.price_history.reindex(columns=self._columns)
             self._latest_prices_cache = self._extract_latest_prices(self.price_history)
             return
@@ -343,7 +348,9 @@ class RealTimeMarketData(BaseMarketData):
         if timestamp < last_timestamp:
             row = {
                 f"{symbol}_Close": (
-                    float(prices[symbol]) if symbol in prices and prices[symbol] is not None else float("nan")
+                    float(prices[symbol])
+                    if symbol in prices and prices[symbol] is not None
+                    else float("nan")
                 )
                 for symbol in self.symbols
             }
@@ -380,8 +387,9 @@ class RealTimeMarketData(BaseMarketData):
         window = window.reset_index()
         return window
 
-    def latest_prices(self) -> Dict[str, float]:
+    def latest_prices(self) -> dict[str, float]:
         return dict(self._latest_prices_cache)
+
     def to_dataframe(self) -> pd.DataFrame:
         """Return the full buffered history with Date column included."""
         return self.price_history.reset_index()
@@ -420,7 +428,7 @@ class BacktestMarketData(BaseMarketData):
             self.full_history.index = self.full_history.index.tz_convert(None)
 
         self.current_idx = 0
-        self.current_timestamp: Optional[pd.Timestamp] = None
+        self.current_timestamp: pd.Timestamp | None = None
         self.price_history = pd.DataFrame()
 
         # Initialize with enough data for lookback if possible
@@ -431,7 +439,7 @@ class BacktestMarketData(BaseMarketData):
             self.current_idx = 0
             self.price_history = pd.DataFrame()
 
-    def fetch_latest_prices(self) -> Dict[str, float]:
+    def fetch_latest_prices(self) -> dict[str, float]:
         if self.current_idx >= len(self.full_history):
             raise StopIteration("Backtest finished.")
 
@@ -444,7 +452,9 @@ class BacktestMarketData(BaseMarketData):
                 prices[symbol] = float(row[col])
         return prices
 
-    def append_prices(self, prices: Dict[str, float], timestamp: pd.Timestamp | None = None) -> None:
+    def append_prices(
+        self, prices: dict[str, float], timestamp: pd.Timestamp | None = None
+    ) -> None:
         # In backtest, advance the window as a O(1) slice of the pre-loaded history
         if self.current_idx < len(self.full_history):
             end_idx = self.current_idx + 1
@@ -452,7 +462,7 @@ class BacktestMarketData(BaseMarketData):
             self.price_history = self.full_history.iloc[start_idx:end_idx]
             self.current_idx += 1
 
-    def refresh_funding_rates(self, throttle_seconds: int = 60) -> Dict[str, float]:
+    def refresh_funding_rates(self, throttle_seconds: int = 60) -> dict[str, float]:
         return {}
 
     def start_websocket(self) -> None:
@@ -467,7 +477,7 @@ def load_historical_data(
     interval: str,
     lookback: int,
     base_url: Sequence[str] | str = DEFAULT_BASE,
-    cache_path: Optional[str] = None,
+    cache_path: str | None = None,
 ) -> pd.DataFrame:
     """Fetch and merge historical data for multiple symbols."""
     if cache_path and os.path.exists(cache_path):

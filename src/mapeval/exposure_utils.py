@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
 
 def sanitize_exposures(
-    exposures: Dict[str, Any],
-    symbols: List[str],
+    exposures: dict[str, Any],
+    symbols: list[str],
     per_symbol_max_exposure: float,
     max_exposure_delta: float,
     max_leverage: float,
-    last_exposures: Dict[str, float],
-    sanitization_notes: List[str],
-) -> Optional[Dict[str, float]]:
+    last_exposures: dict[str, float],
+    sanitization_notes: list[str],
+) -> dict[str, float] | None:
     """Clip and scale exposures to respect per-symbol, delta, and total leverage limits."""
-    sanitized: Dict[str, float] = {}
+    sanitized: dict[str, float] = {}
     per_symbol_cap = max(0.0, per_symbol_max_exposure)
     delta_cap = max(0.0, max_exposure_delta)
-    prev = last_exposures or {symbol: 0.0 for symbol in symbols}
+    prev = last_exposures or dict.fromkeys(symbols, 0.0)
 
     for symbol in symbols:
         raw = exposures.get(symbol, 0.0)
@@ -47,7 +47,7 @@ def sanitize_exposures(
         sanitized[symbol] = clipped
 
     if max_leverage <= 0.0:
-        sanitized = {symbol: 0.0 for symbol in sanitized}
+        sanitized = dict.fromkeys(sanitized, 0.0)
     else:
         total_abs = sum(abs(v) for v in sanitized.values())
         if total_abs > max_leverage + 1e-9 and total_abs > 0.0:
@@ -59,13 +59,13 @@ def sanitize_exposures(
 
 
 def compute_fallback_exposures(
-    symbols: List[str],
+    symbols: list[str],
     current_time: pd.Timestamp,
     available_tools: Any,
     max_leverage: float,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Momentum-based heuristic exposures used when the LLM call fails."""
-    raw_exposures: Dict[str, float] = {}
+    raw_exposures: dict[str, float] = {}
     for symbol in symbols:
         short_ma = available_tools.calculate_moving_average(symbol, current_time, 21)
         long_ma = available_tools.calculate_moving_average(symbol, current_time, 63)

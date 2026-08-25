@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
@@ -21,8 +22,18 @@ def _client_with_exchange_info() -> BinanceFuturesClient:
                 "pricePrecision": 2,
                 "quantityPrecision": 3,
                 "filters": [
-                    {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
-                    {"filterType": "PRICE_FILTER", "minPrice": "0.10", "maxPrice": "1000000", "tickSize": "0.10"},
+                    {
+                        "filterType": "LOT_SIZE",
+                        "minQty": "0.001",
+                        "maxQty": "1000",
+                        "stepSize": "0.001",
+                    },
+                    {
+                        "filterType": "PRICE_FILTER",
+                        "minPrice": "0.10",
+                        "maxPrice": "1000000",
+                        "tickSize": "0.10",
+                    },
                     {"filterType": "MIN_NOTIONAL", "notional": "100"},
                 ],
             }
@@ -43,11 +54,11 @@ class TestBinanceOrderNormalization:
     def test_rejects_quantity_below_min_qty(self):
         client = _client_with_exchange_info()
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"quantity (rounds down to 0|.* below minQty)"):
             client.normalize_order("BTCUSDT", quantity=0.0004, price=63250.0)
 
     def test_rejects_notional_below_min_notional(self):
         client = _client_with_exchange_info()
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="below minNotional"):
             client.normalize_order("BTCUSDT", quantity=0.001, price=50.0)

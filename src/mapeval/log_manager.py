@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 def _utcnow_iso() -> str:
@@ -29,11 +29,11 @@ class SessionLogger:
     def save_session(
         self,
         *,
-        run_args: Dict[str, Any],
-        summary: Dict[str, Any],
+        run_args: dict[str, Any],
+        summary: dict[str, Any],
         start_time: str,
-        end_time: Optional[str] = None,
-        notes: Optional[str] = None,
+        end_time: str | None = None,
+        notes: str | None = None,
     ) -> Path:
         """Write a structured record for a completed trading session."""
         if end_time is None:
@@ -41,17 +41,19 @@ class SessionLogger:
 
         llm_provider = run_args.get("llm_provider") if isinstance(run_args, dict) else None
 
-        summary_copy: Dict[str, Any] = {**summary}
+        summary_copy: dict[str, Any] = {**summary}
         decision_log = summary_copy.get("decision_log", [])
         llm_reasoning = [
             entry.get("reasoning")
             for entry in decision_log
-            if isinstance(entry, dict) and isinstance(entry.get("reasoning"), str) and entry.get("reasoning")
+            if isinstance(entry, dict)
+            and isinstance(entry.get("reasoning"), str)
+            and entry.get("reasoning")
         ]
         summary_copy["llm_reasoning"] = llm_reasoning
 
         session_id = self._generate_session_id(start_time, llm_provider)
-        reasoning_records: list[Dict[str, Any]] = []
+        reasoning_records: list[dict[str, Any]] = []
         if isinstance(decision_log, list):
             for entry in decision_log:
                 if not isinstance(entry, dict):
@@ -74,7 +76,7 @@ class SessionLogger:
                     }
                 )
 
-        reasoning_path: Optional[Path] = None
+        reasoning_path: Path | None = None
         if reasoning_records:
             reasoning_filename = f"{session_id}_llm_decisions.jsonl"
             reasoning_path = self.log_dir / reasoning_filename
@@ -85,7 +87,7 @@ class SessionLogger:
                     )
                     fh.write("\n")
 
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "metadata": {
                 "session_id": session_id,
                 "started_at": start_time,

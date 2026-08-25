@@ -18,9 +18,11 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections.abc import Callable
+from typing import Any
 
 from mapeval.events import Event, EventType
+
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +39,8 @@ class EventBus:
     """
 
     def __init__(self) -> None:
-        self._handlers: Dict[EventType, List[EventHandler]] = defaultdict(list)
-        self._global_handlers: List[EventHandler] = []
+        self._handlers: dict[EventType, list[EventHandler]] = defaultdict(list)
+        self._global_handlers: list[EventHandler] = []
         self._lock = threading.Lock()
         self._event_count: int = 0
         self._error_count: int = 0
@@ -92,7 +94,7 @@ class EventBus:
             self._handlers.clear()
             self._global_handlers.clear()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Return event bus statistics."""
         with self._lock:
             handler_counts = {
@@ -113,8 +115,8 @@ class AsyncEventBus:
     """
 
     def __init__(self) -> None:
-        self._handlers: Dict[EventType, List[AsyncEventHandler]] = defaultdict(list)
-        self._global_handlers: List[AsyncEventHandler] = []
+        self._handlers: dict[EventType, list[AsyncEventHandler]] = defaultdict(list)
+        self._global_handlers: list[AsyncEventHandler] = []
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._running = False
         self._event_count: int = 0

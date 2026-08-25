@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
 import logging
 import os
 import signal
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 from mapeval import binance_data_source
 from mapeval.binance_futures_client import BinanceFuturesClient
@@ -48,18 +50,20 @@ logger = logging.getLogger(__name__)
 try:
     from mapeval.database import DatabaseManager
     from mapeval.db_models import SQLALCHEMY_AVAILABLE
+
     DB_AVAILABLE = SQLALCHEMY_AVAILABLE
 except ImportError:
     DB_AVAILABLE = False
 
 try:
     from mapeval.api_server import FASTAPI_AVAILABLE, start_api_server
+
     API_AVAILABLE = FASTAPI_AVAILABLE
 except ImportError:
     API_AVAILABLE = False
 
 # Global engine reference for signal handlers
-_active_engine: Optional[RealTimeTradingEngine] = None
+_active_engine: RealTimeTradingEngine | None = None
 
 
 def _signal_handler(signum, frame):
@@ -75,7 +79,9 @@ def _signal_handler(signum, frame):
 def _atexit_handler():
     """Safety net: ensure positions are closed on exit."""
     if _active_engine is not None and _active_engine.account.positions:
-        logger.warning("atexit: closing %d remaining positions", len(_active_engine.account.positions))
+        logger.warning(
+            "atexit: closing %d remaining positions", len(_active_engine.account.positions)
+        )
         _active_engine.shutdown()
 
 
@@ -118,7 +124,9 @@ def _print_startup_summary(
         summary += f" | provider={provider_key}"
     print(summary)
     print(f"Symbols: {_compact_symbols(symbols)}")
-    print(f"Duration: {duration_label} ({duration_seconds:.0f}s) | Capital: {initial_capital:.2f} USDT")
+    print(
+        f"Duration: {duration_label} ({duration_seconds:.0f}s) | Capital: {initial_capital:.2f} USDT"
+    )
     if use_ui:
         print("UI: enabled")
     if execution_mode in ("paper", "live"):
@@ -252,7 +260,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--indicators",
         nargs="+",
-        choices=list(AVAILABLE_INDICATORS) + ["all", "none"],
+        choices=[*list(AVAILABLE_INDICATORS), "all", "none"],
         help="Technical indicators to expose to the LLM (use 'all' for every indicator).",
     )
     parser.add_argument(
@@ -406,14 +414,14 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _select_duration(duration_label: str) -> float:
-    durations: Dict[str, int] = TRADING_CONFIG["duration_seconds"]
+    durations: dict[str, int] = TRADING_CONFIG["duration_seconds"]
     return float(durations.get(duration_label, durations["1h"]))
 
 
-def _normalize_indicators(raw: Sequence[str] | None) -> List[str]:
+def _normalize_indicators(raw: Sequence[str] | None) -> list[str]:
     if raw is None:
         return []
-    normalized: List[str] = []
+    normalized: list[str] = []
     seen = set()
     tokens = [token.lower() for token in raw]
     if "all" in tokens:
@@ -467,7 +475,7 @@ def _prompt_float(prompt: str, default_value: float) -> float:
             print("Please enter a positive number.")
 
 
-def _prompt_indicators(default: Sequence[str] | None) -> List[str]:
+def _prompt_indicators(default: Sequence[str] | None) -> list[str]:
     default_list = _normalize_indicators(default)
     default_display = ", ".join(default_list) if default_list else "none"
     print("Available technical indicators:")
@@ -534,9 +542,9 @@ def _run_trading_session(
 ) -> None:
     _validate_mode_combination(mode, execution_mode)
     provider_key = provider.lower()
-    provider_config: Dict[str, Any] = AGENT_CONFIG.get(provider_key, {})
+    provider_config: dict[str, Any] = AGENT_CONFIG.get(provider_key, {})
     duration_seconds = _select_duration(duration_label)
-    uppercase_symbols: List[str] = [symbol.upper() for symbol in symbols]
+    uppercase_symbols: list[str] = [symbol.upper() for symbol in symbols]
     selected_indicators = _normalize_indicators(indicators)
     _print_startup_summary(
         mode=mode,
@@ -557,16 +565,10 @@ def _run_trading_session(
         # Load enough data for lookback + simulation
         # Assuming 1m interval, 2000 rows covers > 1 day
         historical_df = load_historical_data(
-            uppercase_symbols,
-            history_interval,
-            2000,
-            cache_path=data_path
+            uppercase_symbols, history_interval, 2000, cache_path=data_path
         )
         market_data = BacktestMarketData(
-            historical_df,
-            uppercase_symbols,
-            interval=history_interval,
-            lookback=history_lookback
+            historical_df, uppercase_symbols, interval=history_interval, lookback=history_lookback
         )
     else:
         try:
@@ -580,10 +582,8 @@ def _run_trading_session(
                 "Market data bootstrap failed. Check Binance connectivity, TLS/network access, "
                 f"or reduce symbol count. Root cause: {exc}"
             ) from exc
-        try:
+        with contextlib.suppress(Exception):
             market_data.start_websocket()
-        except Exception:
-            pass
 
     agent: Any
     if strategy == "llm":
@@ -707,7 +707,9 @@ def _run_trading_session(
             binance_api_secret = os.getenv("BINANCE_API_SECRET")
             key_warnings = validate_api_keys(binance_api_key, binance_api_secret)
             if key_warnings:
-                raise ValueError(f"Live trading blocked due to credential issues: {'; '.join(key_warnings)}")
+                raise ValueError(
+                    f"Live trading blocked due to credential issues: {'; '.join(key_warnings)}"
+                )
             binance_client = BinanceFuturesClient(
                 api_key=binance_api_key or "",
                 api_secret=binance_api_secret or "",
@@ -732,6 +734,7 @@ def _run_trading_session(
     read_only_guard = ReadOnlyGuard(enabled=read_only)
     if read_only and order_executor is not None:
         from mapeval.order_executor import GuardedOrderExecutor
+
         order_executor = GuardedOrderExecutor(order_executor, read_only_guard)
         print("[SAFE] Read-only guard enabled; order placement is blocked")
 
@@ -790,20 +793,24 @@ def _run_trading_session(
         if api_thread is not None:
             print(f"[API] Monitoring server started on http://localhost:{api_port}")
             if resolved_api_token:
-                print("[API] Auth enabled for REST endpoints via Authorization: Bearer <token> or X-API-Key")
+                print(
+                    "[API] Auth enabled for REST endpoints via Authorization: Bearer <token> or X-API-Key"
+                )
     elif enable_api and not API_AVAILABLE:
         print("[API] fastapi not installed. Install with: pip install fastapi uvicorn")
 
     # Publish session start event
-    event_bus.publish(Event(
-        event_type=EventType.SESSION_START,
-        payload={
-            "execution_mode": execution_mode,
-            "symbols": uppercase_symbols,
-            "initial_capital": initial_capital,
-        },
-        source="main",
-    ))
+    event_bus.publish(
+        Event(
+            event_type=EventType.SESSION_START,
+            payload={
+                "execution_mode": execution_mode,
+                "symbols": uppercase_symbols,
+                "initial_capital": initial_capital,
+            },
+            source="main",
+        )
+    )
 
     run_args = {
         "mode": mode,
@@ -879,10 +886,8 @@ def _run_trading_session(
         start_time=session_start,
         end_time=session_end,
     )
-    try:
+    with contextlib.suppress(Exception):
         market_data.stop_websocket()
-    except Exception:
-        pass
 
     final_account = summary.get("final_account", {})
 
@@ -895,6 +900,7 @@ def _run_trading_session(
                 SessionRepository,
                 TradeRepository,
             )
+
             with db_manager.session() as db_session:
                 session_repo = SessionRepository(db_session)
                 session_id = session_repo.create(
@@ -930,15 +936,17 @@ def _run_trading_session(
             logger.warning("Failed to persist session to database: %s", exc)
 
     # ── Publish Session End Event ────────────────────────────────
-    event_bus.publish(Event(
-        event_type=EventType.SESSION_END,
-        payload={
-            "final_equity": final_account.get("equity", 0.0),
-            "realized_pnl": final_account.get("realized_pnl", 0.0),
-            "total_trades": len(summary.get("trade_log", [])),
-        },
-        source="main",
-    ))
+    event_bus.publish(
+        Event(
+            event_type=EventType.SESSION_END,
+            payload={
+                "final_equity": final_account.get("equity", 0.0),
+                "realized_pnl": final_account.get("realized_pnl", 0.0),
+                "total_trades": len(summary.get("trade_log", [])),
+            },
+            source="main",
+        )
+    )
 
     print("\n=== Session Metadata ===")
     print(f"Execution mode: {execution_mode}")
@@ -957,7 +965,7 @@ def _interactive_cli(args: argparse.Namespace) -> None:
     duration_label = _prompt_menu("Select duration", durations, args.duration)
     initial_capital = _prompt_float("Initial capital (USDT)", args.initial_capital)
     providers = sorted(AGENT_CONFIG.keys())
-    provider_choice = _prompt_menu("Select provider or all", providers + ["all"], "all")
+    provider_choice = _prompt_menu("Select provider or all", [*providers, "all"], "all")
     if provider_choice == "all":
         providers_to_run = providers
     else:

@@ -6,11 +6,11 @@ shared between all executor implementations (simulation, paper, live).
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
-import uuid
+from typing import Any
 
 
 class OrderSide(str, Enum):
@@ -26,8 +26,8 @@ class OrderType(str, Enum):
 
 
 class OrderStatus(str, Enum):
-    PENDING = "PENDING"           # Created but not yet submitted
-    SUBMITTED = "SUBMITTED"       # Sent to exchange
+    PENDING = "PENDING"  # Created but not yet submitted
+    SUBMITTED = "SUBMITTED"  # Sent to exchange
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
     CANCELED = "CANCELED"
@@ -43,10 +43,10 @@ class Order:
     side: OrderSide
     order_type: OrderType
     quantity: float
-    price: Optional[float] = None             # For LIMIT orders
-    stop_price: Optional[float] = None        # For STOP orders
+    price: float | None = None  # For LIMIT orders
+    stop_price: float | None = None  # For STOP orders
     reduce_only: bool = False
-    time_in_force: Optional[str] = None       # GTC, IOC, FOK
+    time_in_force: str | None = None  # GTC, IOC, FOK
     client_order_id: str = field(default_factory=lambda: str(uuid.uuid4())[:16])
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -82,15 +82,15 @@ class OrderResult:
 
     order: Order
     status: OrderStatus
-    exchange_order_id: Optional[str] = None
+    exchange_order_id: str | None = None
     filled_quantity: float = 0.0
     avg_fill_price: float = 0.0
     total_commission: float = 0.0
     total_slippage_cost: float = 0.0
-    fills: List[Fill] = field(default_factory=list)
-    reject_reason: Optional[str] = None
+    fills: list[Fill] = field(default_factory=list)
+    reject_reason: str | None = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    raw_response: Optional[Dict[str, Any]] = None
+    raw_response: dict[str, Any] | None = None
 
     @property
     def is_filled(self) -> bool:
@@ -105,7 +105,7 @@ class OrderResult:
         """Net P&L from this order (fills minus commissions)."""
         return -self.total_commission  # Actual P&L tracked at position level
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "client_order_id": self.order.client_order_id,
             "exchange_order_id": self.exchange_order_id,
@@ -129,12 +129,12 @@ class PositionInfo:
     """Snapshot of a position from the exchange or simulation."""
 
     symbol: str
-    quantity: float              # Positive = long, negative = short
+    quantity: float  # Positive = long, negative = short
     entry_price: float
     mark_price: float
     unrealized_pnl: float
     leverage: float
-    margin_type: str = "cross"   # "cross" or "isolated"
+    margin_type: str = "cross"  # "cross" or "isolated"
     liquidation_price: float = 0.0
 
     @property
@@ -145,6 +145,6 @@ class PositionInfo:
     def side(self) -> str:
         if self.quantity > 0:
             return "LONG"
-        elif self.quantity < 0:
+        if self.quantity < 0:
             return "SHORT"
         return "FLAT"

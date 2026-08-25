@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - optional dependency at runtime
-    load_dotenv = None  # type: ignore
+    load_dotenv = None
 
 
 def _load_env() -> None:
@@ -30,7 +30,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 QWEN_API_KEY = os.getenv("QWEN_API_KEY", "")
 
-AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
+AGENT_CONFIG: dict[str, dict[str, Any]] = {
     "openai": {
         "model_name": "gpt-5",
         "temperature": 0.2,
@@ -50,7 +50,7 @@ AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
     },
 }
 
-TRADING_CONFIG: Dict[str, Any] = {
+TRADING_CONFIG: dict[str, Any] = {
     "symbols": [
         "BTCUSDT",
         "ETHUSDT",

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class EventType(str, Enum):
@@ -59,17 +59,18 @@ class Event:
     """Base event that flows through the event bus."""
 
     event_type: EventType
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     source: str = "system"
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    event_id: Optional[str] = None
+    event_id: str | None = None
 
     def __post_init__(self):
         if self.event_id is None:
             import uuid
+
             self.event_id = uuid.uuid4().hex[:12]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
             "event_type": self.event_type.value,
@@ -81,7 +82,8 @@ class Event:
 
 # ── Convenience constructors ────────────────────────────────────────────
 
-def price_update(prices: Dict[str, float], source: str = "websocket") -> Event:
+
+def price_update(prices: dict[str, float], source: str = "websocket") -> Event:
     return Event(
         event_type=EventType.PRICE_UPDATE,
         payload={"prices": prices},
@@ -89,7 +91,9 @@ def price_update(prices: Dict[str, float], source: str = "websocket") -> Event:
     )
 
 
-def signal_generated(exposures: Dict[str, float], reasoning: str = "", source: str = "llm_agent") -> Event:
+def signal_generated(
+    exposures: dict[str, float], reasoning: str = "", source: str = "llm_agent"
+) -> Event:
     return Event(
         event_type=EventType.SIGNAL_GENERATED,
         payload={"exposures": exposures, "reasoning": reasoning},
@@ -97,7 +101,9 @@ def signal_generated(exposures: Dict[str, float], reasoning: str = "", source: s
     )
 
 
-def order_filled(symbol: str, side: str, quantity: float, price: float, commission: float = 0.0) -> Event:
+def order_filled(
+    symbol: str, side: str, quantity: float, price: float, commission: float = 0.0
+) -> Event:
     return Event(
         event_type=EventType.ORDER_FILLED,
         payload={
@@ -123,7 +129,9 @@ def stop_triggered(symbol: str, stop_price: float, current_price: float) -> Even
     )
 
 
-def risk_alert(alert_type: str, message: str, severity: str = "warning", details: Optional[Dict] = None) -> Event:
+def risk_alert(
+    alert_type: str, message: str, severity: str = "warning", details: dict | None = None
+) -> Event:
     return Event(
         event_type=EventType.RISK_ALERT,
         payload={

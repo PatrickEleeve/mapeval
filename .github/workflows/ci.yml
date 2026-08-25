@@ -69,11 +69,9 @@ jobs:
           python -m pip install 'ruff==0.16.4'
 
       - name: Run Ruff linter
-        continue-on-error: true
         run: ruff check src/ tests/ --output-format=github
 
       - name: Run Ruff formatter check
-        continue-on-error: true
         run: ruff format src/ tests/ --check
 
   docker:

@@ -6,10 +6,13 @@ Currently implements Binance; extensible to Bybit, OKX, Hyperliquid, etc.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +21,7 @@ logger = logging.getLogger(__name__)
 class Ticker:
     symbol: str
     price: float
-    timestamp: Optional[float] = None
+    timestamp: float | None = None
 
 
 @dataclass
@@ -44,11 +47,10 @@ class Exchange(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @abstractmethod
-    def get_symbols(self) -> List[str]:
+    def get_symbols(self) -> list[str]:
         """Get all available trading symbols."""
         ...
 
@@ -58,12 +60,12 @@ class Exchange(ABC):
         ...
 
     @abstractmethod
-    def get_tickers(self, symbols: List[str]) -> Dict[str, Ticker]:
+    def get_tickers(self, symbols: list[str]) -> dict[str, Ticker]:
         """Get latest ticker prices for multiple symbols."""
         ...
 
     @abstractmethod
-    def get_klines(self, symbol: str, interval: str, limit: int = 500) -> List[Kline]:
+    def get_klines(self, symbol: str, interval: str, limit: int = 500) -> list[Kline]:
         """Get historical kline/candlestick data."""
         ...
 
@@ -73,7 +75,9 @@ class Exchange(ABC):
         ...
 
     @abstractmethod
-    def place_order(self, symbol: str, side: str, order_type: str, quantity: float, price: Optional[float] = None) -> Dict[str, Any]:
+    def place_order(
+        self, symbol: str, side: str, order_type: str, quantity: float, price: float | None = None
+    ) -> dict[str, Any]:
         """Place a new order."""
         ...
 
@@ -83,12 +87,12 @@ class Exchange(ABC):
         ...
 
     @abstractmethod
-    def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """Get order status."""
         ...
 
     @abstractmethod
-    def get_positions(self) -> List[Dict[str, Any]]:
+    def get_positions(self) -> list[dict[str, Any]]:
         """Get all current positions."""
         ...
 
@@ -97,7 +101,7 @@ class Exchange(ABC):
         """Change leverage for a symbol."""
         ...
 
-    def start_websocket(self, symbols: List[str], on_price: Callable) -> None:
+    def start_websocket(self, symbols: list[str], on_price: Callable) -> None:
         """Start websocket streaming (optional, not all exchanges support)."""
         raise NotImplementedError
 
@@ -121,7 +125,7 @@ class BinanceExchange(Exchange):
     def name(self) -> str:
         return "binance_testnet" if self._testnet else "binance"
 
-    def get_symbols(self) -> List[str]:
+    def get_symbols(self) -> list[str]:
         if self._client is None:
             return []
         try:
@@ -137,22 +141,22 @@ class BinanceExchange(Exchange):
             return Ticker(symbol=data["symbol"], price=float(data["price"]))
         if self._data_source is not None:
             from mapeval.binance_data_source import get_ticker_price
+
             data = get_ticker_price(symbol)
             return Ticker(symbol=data["symbol"], price=float(data["price"]))
         raise RuntimeError("No client or data source configured")
 
-    def get_tickers(self, symbols: List[str]) -> Dict[str, Ticker]:
+    def get_tickers(self, symbols: list[str]) -> dict[str, Ticker]:
         result = {}
         for sym in symbols:
-            try:
+            with contextlib.suppress(Exception):
                 result[sym] = self.get_ticker(sym)
-            except Exception:
-                pass
         return result
 
-    def get_klines(self, symbol: str, interval: str, limit: int = 500) -> List[Kline]:
+    def get_klines(self, symbol: str, interval: str, limit: int = 500) -> list[Kline]:
         if self._data_source is not None:
             from mapeval.binance_data_source import fetch_klines
+
             raw = fetch_klines(symbol, interval=interval, limit=limit)
             return [
                 Kline(
@@ -178,12 +182,17 @@ class BinanceExchange(Exchange):
             total_margin=float(info.get("totalMarginBalance", 0)),
         )
 
-    def place_order(self, symbol: str, side: str, order_type: str, quantity: float, price: Optional[float] = None) -> Dict[str, Any]:
+    def place_order(
+        self, symbol: str, side: str, order_type: str, quantity: float, price: float | None = None
+    ) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("Authenticated client required")
         return self._client.place_order(
-            symbol=symbol, side=side, order_type=order_type,
-            quantity=quantity, price=price,
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
         )
 
     def cancel_order(self, symbol: str, order_id: str) -> bool:
@@ -195,12 +204,12 @@ class BinanceExchange(Exchange):
         except Exception:
             return False
 
-    def get_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    def get_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("Authenticated client required")
         return self._client.get_order(symbol=symbol, order_id=int(order_id))
 
-    def get_positions(self) -> List[Dict[str, Any]]:
+    def get_positions(self) -> list[dict[str, Any]]:
         if self._client is None:
             return []
         return self._client.get_positions()

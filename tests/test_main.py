@@ -27,7 +27,7 @@ class TestLiveEnvironmentResolution:
         assert _resolve_live_environment(False, True) == "mainnet"
 
     def test_rejects_conflicting_flags(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Choose only one"):
             _resolve_live_environment(True, True)
 
 
@@ -42,7 +42,7 @@ class TestLiveConfirmation:
         assert _required_live_confirmation("mainnet") == "ENABLE BINANCE MAINNET LIVE"
 
     def test_non_interactive_rejects_wrong_phrase(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Live trading requires --live-confirmation"):
             _confirm_live_execution("testnet", "wrong", True)
 
     def test_non_interactive_accepts_exact_phrase(self):

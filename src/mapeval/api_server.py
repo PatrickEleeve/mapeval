@@ -14,32 +14,31 @@ Or embed in the trading process via ``start_api_server()``.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from mapeval.security import constant_time_equals
+
 
 logger = logging.getLogger(__name__)
 
 try:
+    import uvicorn
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
-    import uvicorn
+
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
-
-from mapeval.security import constant_time_equals
-
 
 # Global references set by the trading process
 _engine = None
 _event_bus = None
 _db_manager = None
 _api_token = None
-_ws_clients: List = []
+_ws_clients: list = []
 
 
 def set_engine(engine) -> None:
@@ -57,26 +56,26 @@ def set_db_manager(db) -> None:
     _db_manager = db
 
 
-def set_api_token(token: Optional[str]) -> None:
+def set_api_token(token: str | None) -> None:
     global _api_token
     _api_token = token
 
 
-def _extract_api_token(request: "Request") -> Optional[str]:
+def _extract_api_token(request: Request) -> str | None:
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header.split(" ", 1)[1].strip()
     return request.headers.get("x-api-key")
 
 
-def _extract_websocket_token(websocket: "WebSocket") -> Optional[str]:
+def _extract_websocket_token(websocket: WebSocket) -> str | None:
     auth_header = websocket.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header.split(" ", 1)[1].strip()
     return websocket.headers.get("x-api-key") or websocket.query_params.get("token")
 
 
-def _require_api_token(request: "Request") -> None:
+def _require_api_token(request: Request) -> None:
     if not _api_token:
         return
     provided = _extract_api_token(request)
@@ -84,7 +83,7 @@ def _require_api_token(request: "Request") -> None:
         raise HTTPException(status_code=401, detail="Valid API token required")
 
 
-async def _require_websocket_token(websocket: "WebSocket") -> bool:
+async def _require_websocket_token(websocket: WebSocket) -> bool:
     if not _api_token:
         return True
     provided = _extract_websocket_token(websocket)
@@ -94,17 +93,19 @@ async def _require_websocket_token(websocket: "WebSocket") -> bool:
     return False
 
 
-def _engine_controls() -> Dict[str, Any]:
+def _engine_controls() -> dict[str, Any]:
     if _engine is None:
         raise HTTPException(status_code=503, detail="Trading engine not initialized")
     return {
-        "read_only": bool(getattr(getattr(_engine, "read_only_guard", None), "is_read_only", False)),
+        "read_only": bool(
+            getattr(getattr(_engine, "read_only_guard", None), "is_read_only", False)
+        ),
         "kill_switch_active": bool(getattr(_engine, "_kill_switch_active", False)),
         "shutdown_requested": bool(getattr(_engine, "_shutdown_requested", False)),
     }
 
 
-def create_app() -> "FastAPI":
+def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     if not FASTAPI_AVAILABLE:
         raise RuntimeError("FastAPI is required. Install with: pip install fastapi uvicorn")
@@ -163,7 +164,7 @@ def create_app() -> "FastAPI":
     # ── Trade History ───────────────────────────────────────────────
 
     @app.get("/api/trades")
-    async def get_trades(request: Request, limit: int = 50, symbol: Optional[str] = None):
+    async def get_trades(request: Request, limit: int = 50, symbol: str | None = None):
         _require_api_token(request)
         if _engine is None:
             raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -250,7 +251,7 @@ def create_app() -> "FastAPI":
         return _engine_controls()
 
     @app.post("/api/read-only")
-    async def set_read_only(request: Request, payload: Optional[Dict[str, Any]] = None):
+    async def set_read_only(request: Request, payload: dict[str, Any] | None = None):
         _require_api_token(request)
         if _engine is None:
             raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -264,7 +265,7 @@ def create_app() -> "FastAPI":
         }
 
     @app.post("/api/kill-switch")
-    async def set_kill_switch(request: Request, payload: Optional[Dict[str, Any]] = None):
+    async def set_kill_switch(request: Request, payload: dict[str, Any] | None = None):
         _require_api_token(request)
         if _engine is None:
             raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -318,7 +319,7 @@ def start_api_server(
     engine=None,
     event_bus=None,
     db_manager=None,
-    api_token: Optional[str] = None,
+    api_token: str | None = None,
 ) -> threading.Thread:
     """Start the API server in a background thread.
 

@@ -39,11 +39,7 @@ def repair_editable_pth_files() -> tuple[int, int]:
 
 def main() -> None:
     cleared, fallback_written = repair_editable_pth_files()
-    print(
-        "Editable install repair:"
-        f" cleared_hidden={cleared}"
-        f" fallback_written={fallback_written}"
-    )
+    print(f"Editable install repair: cleared_hidden={cleared} fallback_written={fallback_written}")
 
 
 if __name__ == "__main__":

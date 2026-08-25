@@ -7,10 +7,10 @@ P2: Turnover constraints
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class MarginMetrics:
     cumulative_fees: float = 0.0
     cumulative_slippage: float = 0.0
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         return {
             "total_notional_long": round(self.total_notional_long, 2),
             "total_notional_short": round(self.total_notional_short, 2),
@@ -77,7 +77,7 @@ class PortfolioRiskController:
         unrealized_pnl: float,
         equity: float,
         tolerance: float = 1e-4,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         expected = balance + unrealized_pnl
         diff = abs(equity - expected)
         if diff > tolerance:
@@ -92,8 +92,8 @@ class PortfolioRiskController:
 
     def compute_margin_metrics(
         self,
-        positions: Dict[str, Any],
-        prices: Dict[str, float],
+        positions: dict[str, Any],
+        prices: dict[str, float],
         equity: float,
     ) -> MarginMetrics:
         total_long = 0.0
@@ -103,7 +103,11 @@ class PortfolioRiskController:
             price = prices.get(symbol, 0.0)
             if price <= 0:
                 continue
-            qty = getattr(pos, "quantity", 0.0) if hasattr(pos, "quantity") else pos.get("quantity", 0.0)
+            qty = (
+                getattr(pos, "quantity", 0.0)
+                if hasattr(pos, "quantity")
+                else pos.get("quantity", 0.0)
+            )
             notional = price * qty
             if notional > 0:
                 total_long += notional
@@ -142,27 +146,37 @@ class PortfolioRiskController:
         balance: float,
         unrealized_pnl: float,
         equity: float,
-        positions: Dict[str, Any],
-        prices: Dict[str, float],
-    ) -> Dict[str, Any]:
+        positions: dict[str, Any],
+        prices: dict[str, float],
+    ) -> dict[str, Any]:
         margin_metrics = self.compute_margin_metrics(positions, prices, equity)
-        
+
         positions_detail = []
         for symbol, pos in positions.items():
             price = prices.get(symbol, 0.0)
-            qty = getattr(pos, "quantity", 0.0) if hasattr(pos, "quantity") else pos.get("quantity", 0.0)
-            entry = getattr(pos, "entry_price", 0.0) if hasattr(pos, "entry_price") else pos.get("entry_price", 0.0)
+            qty = (
+                getattr(pos, "quantity", 0.0)
+                if hasattr(pos, "quantity")
+                else pos.get("quantity", 0.0)
+            )
+            entry = (
+                getattr(pos, "entry_price", 0.0)
+                if hasattr(pos, "entry_price")
+                else pos.get("entry_price", 0.0)
+            )
             notional = price * qty
             unrealized = (price - entry) * qty if entry > 0 else 0.0
-            positions_detail.append({
-                "symbol": symbol,
-                "quantity": round(qty, 6),
-                "entry_price": round(entry, 6),
-                "mark_price": round(price, 6),
-                "notional": round(notional, 2),
-                "unrealized_pnl": round(unrealized, 2),
-                "side": "LONG" if qty > 0 else "SHORT",
-            })
+            positions_detail.append(
+                {
+                    "symbol": symbol,
+                    "quantity": round(qty, 6),
+                    "entry_price": round(entry, 6),
+                    "mark_price": round(price, 6),
+                    "notional": round(notional, 2),
+                    "unrealized_pnl": round(unrealized, 2),
+                    "side": "LONG" if qty > 0 else "SHORT",
+                }
+            )
 
         audit = {
             "event": "LIQUIDATION",
@@ -181,9 +195,9 @@ class PortfolioRiskController:
         }
 
         log_line = (
-            f"\n{'='*60}\n"
+            f"\n{'=' * 60}\n"
             f"🚨 LIQUIDATION EVENT @ {timestamp}\n"
-            f"{'='*60}\n"
+            f"{'=' * 60}\n"
             f"Trigger: {trigger_reason}\n"
             f"\n[Account State]\n"
             f"  Balance:        {balance:>14.2f} USDT\n"
@@ -211,7 +225,7 @@ class PortfolioRiskController:
                 f"entry={p['entry_price']:>10.4f} mark={p['mark_price']:>10.4f} "
                 f"notional={p['notional']:>12.2f} pnl={p['unrealized_pnl']:>+10.2f}\n"
             )
-        log_line += f"{'='*60}\n"
+        log_line += f"{'=' * 60}\n"
 
         logger.critical(log_line)
         print(log_line)
@@ -220,11 +234,11 @@ class PortfolioRiskController:
 
     def validate_portfolio_constraints(
         self,
-        proposed_exposures: Dict[str, float],
-        current_exposures: Dict[str, float],
+        proposed_exposures: dict[str, float],
+        current_exposures: dict[str, float],
         allow_rescale: bool = True,
-    ) -> Dict[str, Any]:
-        notes: List[str] = []
+    ) -> dict[str, Any]:
+        notes: list[str] = []
         sanitized = dict(proposed_exposures)
 
         gross_leverage = sum(abs(v) for v in sanitized.values())
@@ -266,8 +280,8 @@ class PortfolioRiskController:
         if len(non_zero) > self.limits.max_open_positions:
             if allow_rescale:
                 sorted_by_size = sorted(non_zero, key=lambda x: abs(x[1]), reverse=True)
-                kept_symbols = {s for s, _ in sorted_by_size[:self.limits.max_open_positions]}
-                zeroed = [s for s, _ in sorted_by_size[self.limits.max_open_positions:]]
+                kept_symbols = {s for s, _ in sorted_by_size[: self.limits.max_open_positions]}
+                zeroed = [s for s, _ in sorted_by_size[self.limits.max_open_positions :]]
                 sanitized = {k: (v if k in kept_symbols else 0.0) for k, v in sanitized.items()}
                 notes.append(
                     f"MAX_POSITIONS: zeroed {len(zeroed)} smallest to keep {self.limits.max_open_positions}: "
@@ -323,8 +337,8 @@ class PortfolioRiskController:
 
     def compute_turnover_penalty(
         self,
-        proposed_exposures: Dict[str, float],
-        current_exposures: Dict[str, float],
+        proposed_exposures: dict[str, float],
+        current_exposures: dict[str, float],
         equity: float,
     ) -> float:
         turnover = sum(
@@ -335,12 +349,14 @@ class PortfolioRiskController:
 
     def should_reject_low_confidence(
         self,
-        confidence: Optional[float],
-        reasoning: Optional[str],
-    ) -> Tuple[bool, str]:
+        confidence: float | None,
+        reasoning: str | None,
+    ) -> tuple[bool, str]:
         if confidence is not None and confidence < self.limits.min_confidence_threshold:
-            return True, f"Confidence {confidence:.2f} < threshold {self.limits.min_confidence_threshold:.2f}"
+            return (
+                True,
+                f"Confidence {confidence:.2f} < threshold {self.limits.min_confidence_threshold:.2f}",
+            )
         if reasoning is not None and len(reasoning.strip()) < 20:
             return True, f"Reasoning too short ({len(reasoning.strip())} chars)"
         return False, "OK"
-

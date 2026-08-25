@@ -63,6 +63,7 @@ class RecordingExecutor:
     def submit_order(self, order):
         self.orders.append(order)
         from mapeval.order_models import OrderResult, OrderStatus
+
         return OrderResult(
             order=order,
             status=OrderStatus.FILLED,
@@ -76,6 +77,7 @@ class RecordingExecutor:
 
     def get_order_status(self, symbol: str, order_id: str):
         from mapeval.order_models import OrderStatus
+
         return OrderStatus.FILLED
 
     def sync_positions(self):
@@ -107,11 +109,13 @@ class StubAuditLogger:
         self.entries = []
 
     def log_control_action(self, action: str, details=None, execution_mode: str = "live") -> None:
-        self.entries.append({
-            "action": action,
-            "details": details or {},
-            "execution_mode": execution_mode,
-        })
+        self.entries.append(
+            {
+                "action": action,
+                "details": details or {},
+                "execution_mode": execution_mode,
+            }
+        )
 
 
 class TestAccountState:
@@ -233,9 +237,7 @@ class TestRealTimeTradingEngine:
         assert final_account["unrealized_pnl"] == 0.0
         assert final_account["realized_pnl"] == pytest.approx(trade_pnl)
         assert final_account["equity"] == pytest.approx(1_000.0 + trade_pnl)
-        assert summary["equity_history"][-1]["equity"] == pytest.approx(
-            final_account["equity"]
-        )
+        assert summary["equity_history"][-1]["equity"] == pytest.approx(final_account["equity"])
 
     def test_validate_exposures_rejects_unknown_symbol(self):
         market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50000.0})
@@ -276,7 +278,9 @@ class TestRealTimeTradingEngine:
         assert len(result["notes"]) > 0
 
     def test_validate_exposures_scales_total_leverage(self):
-        market_data = MockMarketData(["BTCUSDT", "ETHUSDT"], {"BTCUSDT": 50000.0, "ETHUSDT": 3000.0})
+        market_data = MockMarketData(
+            ["BTCUSDT", "ETHUSDT"], {"BTCUSDT": 50000.0, "ETHUSDT": 3000.0}
+        )
         agent = MockAgent()
         engine = RealTimeTradingEngine(
             market_data=market_data,
