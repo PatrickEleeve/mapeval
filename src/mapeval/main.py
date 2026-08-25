@@ -116,6 +116,7 @@ def _print_startup_summary(
     initial_capital: float,
     use_ui: bool,
     reconcile_interval: float,
+    stop_loss_enabled: bool,
 ) -> None:
     """Print a concise startup summary tailored to the selected mode."""
     print("=== MAPEval ===")
@@ -133,6 +134,7 @@ def _print_startup_summary(
         print(f"Safety: reconcile every {reconcile_interval:.0f}s")
     elif execution_mode == "simulation":
         print("Safety: simulation only, no external orders")
+    print(f"Stop loss: {'enabled' if stop_loss_enabled else 'disabled'}")
 
 
 def _resolve_live_environment(binance_testnet: bool, binance_mainnet: bool) -> str:
@@ -142,6 +144,12 @@ def _resolve_live_environment(binance_testnet: bool, binance_mainnet: bool) -> s
     if binance_mainnet:
         return "mainnet"
     return "testnet"
+
+
+def _resolve_stop_loss_enabled(execution_mode: str, override: bool | None) -> bool:
+    if override is not None:
+        return override
+    return execution_mode in ("paper", "live")
 
 
 def _validate_mode_combination(mode: str, execution_mode: str) -> None:
@@ -338,6 +346,32 @@ def _parse_args() -> argparse.Namespace:
         "--read-only",
         action="store_true",
         help="Block order placement and cancellation while keeping monitoring active.",
+    )
+    stop_group = parser.add_mutually_exclusive_group()
+    stop_group.add_argument(
+        "--stop-loss",
+        dest="stop_loss",
+        action="store_true",
+        help="Enable engine-side ATR trailing stops.",
+    )
+    stop_group.add_argument(
+        "--no-stop-loss",
+        dest="stop_loss",
+        action="store_false",
+        help="Disable engine-side ATR trailing stops.",
+    )
+    parser.set_defaults(stop_loss=None)
+    parser.add_argument(
+        "--stop-atr-multiplier",
+        type=float,
+        default=2.0,
+        help="ATR multiplier used for initial and trailing stop distance.",
+    )
+    parser.add_argument(
+        "--stop-trailing-activation",
+        type=float,
+        default=0.01,
+        help="Profit fraction required before the stop starts trailing.",
     )
     parser.add_argument(
         "--enable-api",
@@ -539,6 +573,9 @@ def _run_trading_session(
     telegram_bot_token: str | None = None,
     telegram_chat_id: str | None = None,
     webhook_url: str | None = None,
+    stop_loss: bool | None = None,
+    stop_atr_multiplier: float = 2.0,
+    stop_trailing_activation: float = 0.01,
 ) -> None:
     _validate_mode_combination(mode, execution_mode)
     provider_key = provider.lower()
@@ -546,6 +583,7 @@ def _run_trading_session(
     duration_seconds = _select_duration(duration_label)
     uppercase_symbols: list[str] = [symbol.upper() for symbol in symbols]
     selected_indicators = _normalize_indicators(indicators)
+    stop_loss_enabled = _resolve_stop_loss_enabled(execution_mode, stop_loss)
     _print_startup_summary(
         mode=mode,
         execution_mode=execution_mode,
@@ -557,6 +595,7 @@ def _run_trading_session(
         initial_capital=initial_capital,
         use_ui=use_ui,
         reconcile_interval=reconcile_interval,
+        stop_loss_enabled=stop_loss_enabled,
     )
 
     market_data: BacktestMarketData | RealTimeMarketData
@@ -670,9 +709,22 @@ def _run_trading_session(
             data=evt.payload,
         )
 
+    def _on_stop_triggered(evt: Event) -> None:
+        payload = evt.payload
+        notifier.send_alert(
+            level="critical",
+            title=f"Stop Triggered: {payload.get('symbol', '')}",
+            message=(
+                f"Stop {payload.get('stop_price', 0):.4f} crossed at "
+                f"{payload.get('current_price', 0):.4f}"
+            ),
+            data=payload,
+        )
+
     event_bus.subscribe(EventType.RISK_ALERT, _on_risk_alert)
     event_bus.subscribe(EventType.ORDER_FILLED, _on_order_filled)
     event_bus.subscribe(EventType.FORCE_CLOSE, _on_force_close)
+    event_bus.subscribe(EventType.STOP_TRIGGERED, _on_stop_triggered)
 
     # ── Audit Logger ─────────────────────────────────────────────
     audit_logger = AuditLogger(log_dir=os.path.join(log_dir, "audit"))
@@ -760,6 +812,9 @@ def _run_trading_session(
         execution_mode=execution_mode,
         order_executor=order_executor,
         reconcile_interval_seconds=reconcile_interval,
+        stop_loss_enabled=stop_loss_enabled,
+        stop_atr_multiplier=stop_atr_multiplier,
+        stop_trailing_activation=stop_trailing_activation,
     )
 
     # Store event bus and notifier on engine for access by other components
@@ -1015,6 +1070,9 @@ def _interactive_cli(args: argparse.Namespace) -> None:
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
             webhook_url=args.webhook_url,
+            stop_loss=args.stop_loss,
+            stop_atr_multiplier=args.stop_atr_multiplier,
+            stop_trailing_activation=args.stop_trailing_activation,
         )
 
 
@@ -1065,6 +1123,9 @@ def main() -> None:
             telegram_bot_token=args.telegram_bot_token,
             telegram_chat_id=args.telegram_chat_id,
             webhook_url=args.webhook_url,
+            stop_loss=args.stop_loss,
+            stop_atr_multiplier=args.stop_atr_multiplier,
+            stop_trailing_activation=args.stop_trailing_activation,
         )
 
 

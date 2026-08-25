@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, "src")
 
 import pandas as pd
+import pytest
 
 from mapeval.stop_loss_manager import StopLossManager
 
@@ -25,6 +26,11 @@ class TestStopLossManager:
         )
         assert stop == 96.0
 
+    @pytest.mark.parametrize("multiplier", [0.0, -1.0, float("nan"), float("inf")])
+    def test_rejects_invalid_atr_multiplier(self, multiplier):
+        with pytest.raises(ValueError, match="atr_multiplier"):
+            StopLossManager(atr_multiplier=multiplier)
+
     def test_calculate_initial_stop_short_with_atr(self):
         stop = self.manager.calculate_initial_stop(
             symbol="ETHUSDT",
@@ -43,6 +49,14 @@ class TestStopLossManager:
             atr_value=None,
             timestamp=self.timestamp,
         )
+        assert stop == 98.0
+
+    @pytest.mark.parametrize("atr_value", [float("nan"), float("inf"), float("-inf")])
+    def test_invalid_atr_uses_percentage_fallback(self, atr_value):
+        stop = self.manager.calculate_initial_stop(
+            "BTCUSDT", 100.0, "long", atr_value, self.timestamp
+        )
+
         assert stop == 98.0
 
     def test_trailing_stop_updates_on_profit_long(self):

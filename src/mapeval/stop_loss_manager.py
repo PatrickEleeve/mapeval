@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -29,7 +30,16 @@ class StopLossLevel:
 class StopLossManager:
     atr_multiplier: float = 2.0
     trailing_activation_pct: float = 0.01
+    fallback_stop_pct: float = 0.02
     stop_levels: dict[str, StopLossLevel] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.atr_multiplier) or self.atr_multiplier <= 0:
+            raise ValueError("atr_multiplier must be a positive finite number")
+        if not math.isfinite(self.trailing_activation_pct) or self.trailing_activation_pct < 0:
+            raise ValueError("trailing_activation_pct must be a non-negative finite number")
+        if not math.isfinite(self.fallback_stop_pct) or not 0 < self.fallback_stop_pct < 1:
+            raise ValueError("fallback_stop_pct must be between 0 and 1")
 
     def calculate_initial_stop(
         self,
@@ -39,8 +49,8 @@ class StopLossManager:
         atr_value: float | None,
         timestamp: pd.Timestamp,
     ) -> float:
-        if atr_value is None or atr_value <= 0:
-            default_pct = 0.02
+        if atr_value is None or not math.isfinite(atr_value) or atr_value <= 0:
+            default_pct = self.fallback_stop_pct
             if position_side == "long":
                 stop_price = entry_price * (1 - default_pct)
             else:
@@ -82,10 +92,10 @@ class StopLossManager:
 
                 profit_pct = (current_price - level.initial_entry) / level.initial_entry
                 if profit_pct >= self.trailing_activation_pct:
-                    if atr_value and atr_value > 0:
+                    if atr_value and math.isfinite(atr_value) and atr_value > 0:
                         new_stop = current_price - (atr_value * self.atr_multiplier)
                     else:
-                        new_stop = current_price * 0.98
+                        new_stop = current_price * (1 - self.fallback_stop_pct)
 
                     if new_stop > level.stop_price:
                         level.stop_price = new_stop
@@ -95,10 +105,10 @@ class StopLossManager:
 
                 profit_pct = (level.initial_entry - current_price) / level.initial_entry
                 if profit_pct >= self.trailing_activation_pct:
-                    if atr_value and atr_value > 0:
+                    if atr_value and math.isfinite(atr_value) and atr_value > 0:
                         new_stop = current_price + (atr_value * self.atr_multiplier)
                     else:
-                        new_stop = current_price * 1.02
+                        new_stop = current_price * (1 + self.fallback_stop_pct)
 
                     if new_stop < level.stop_price:
                         level.stop_price = new_stop

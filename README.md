@@ -123,6 +123,21 @@ curl -X POST http://localhost:8000/api/plans/preview \
 The response includes target exposures, projected orders, estimated commission,
 margin requirements, engine adjustments, and read-only or kill-switch blockers.
 
+## Automatic Stop Loss
+
+Paper and live sessions enable engine-side ATR trailing stops by default. Simulation
+and backtest sessions preserve their previous behavior unless `--stop-loss` is set.
+
+```bash
+python -m mapeval --execution-mode paper --stop-atr-multiplier 2 \
+  --stop-trailing-activation 0.01 --non-interactive
+```
+
+Use `--no-stop-loss` to disable the protection explicitly. Active stop levels are
+available from `GET /api/risk`. Version 1 evaluates stops inside the running process;
+it does not place exchange-native stop orders, so stops cannot trigger while the
+process is offline. In read-only mode, a triggered stop alerts but does not close.
+
 ## Installed CLI
 
 If you install the project as a package, the console entrypoint is:

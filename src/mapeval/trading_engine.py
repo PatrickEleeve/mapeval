@@ -15,6 +15,7 @@ from mapeval.order_executor import OrderExecutor
 from mapeval.order_models import Order, OrderSide, OrderStatus, OrderType
 from mapeval.portfolio_risk_controller import PortfolioRiskController, PortfolioRiskLimits
 from mapeval.risk_manager import RiskManager
+from mapeval.stop_loss_manager import StopLossManager
 from mapeval.tools import FinancialTools
 
 
@@ -38,6 +39,7 @@ try:
     from mapeval.events import Event, EventType
     from mapeval.events import order_filled as _order_filled_event
     from mapeval.events import risk_alert as _risk_alert_event
+    from mapeval.events import stop_triggered as _stop_triggered_event
 
     EVENTS_AVAILABLE = True
 except ImportError:
@@ -119,6 +121,9 @@ class RealTimeTradingEngine:
         order_executor: OrderExecutor | None = None,
         reconcile_interval_seconds: float | None = None,
         reconcile_auto_read_only: bool = True,
+        stop_loss_enabled: bool = False,
+        stop_atr_multiplier: float = 2.0,
+        stop_trailing_activation: float = 0.01,
     ) -> None:
         self.market_data = market_data
         self.agent = agent
@@ -134,6 +139,12 @@ class RealTimeTradingEngine:
         self.execution_mode = execution_mode
         self.reconcile_interval_seconds = reconcile_interval_seconds
         self.reconcile_auto_read_only = reconcile_auto_read_only
+        self.stop_loss_enabled = bool(stop_loss_enabled)
+        self.stop_loss_manager = StopLossManager(
+            atr_multiplier=float(stop_atr_multiplier),
+            trailing_activation_pct=float(stop_trailing_activation),
+        )
+        self._last_stop_alerts: dict[str, pd.Timestamp] = {}
         per_symbol_cap = (
             per_symbol_max_exposure if per_symbol_max_exposure is not None else self.max_leverage
         )
@@ -195,6 +206,108 @@ class RealTimeTradingEngine:
         self.notifier: Any = None
         self.audit_logger: Any = None
         self.read_only_guard: Any = None
+
+    def _calculate_stop_atr(self, symbol: str, timestamp: pd.Timestamp) -> float | None:
+        try:
+            history = self.market_data.get_recent_window(rows=20)
+            atr_value = FinancialTools(history).calculate_atr(symbol, timestamp, window_size=14)
+            return float(atr_value) if atr_value is not None else None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _process_stop_losses(
+        self,
+        prices: dict[str, float],
+        timestamp: pd.Timestamp,
+        reporter: Any | None = None,
+    ) -> list[str]:
+        """Update trailing stops and close positions whose stop has triggered."""
+        if not self.stop_loss_enabled:
+            return []
+
+        open_symbols = set(self.account.positions)
+        for symbol in set(self.stop_loss_manager.stop_levels) - open_symbols:
+            self.stop_loss_manager.remove_stop(symbol)
+            self._last_stop_alerts.pop(symbol, None)
+
+        triggered: list[str] = []
+        for symbol, position in list(self.account.positions.items()):
+            price = prices.get(symbol)
+            if price is None or not math.isfinite(price) or price <= 0:
+                continue
+            side = "long" if position.quantity > 0 else "short"
+            atr_value = self._calculate_stop_atr(symbol, timestamp)
+            if self.stop_loss_manager.get_stop_price(symbol) is None:
+                self.stop_loss_manager.calculate_initial_stop(
+                    symbol, position.entry_price, side, atr_value, timestamp
+                )
+            self.stop_loss_manager.update_trailing_stop(symbol, price, side, atr_value)
+            if not self.stop_loss_manager.check_stop_triggered(symbol, price, side):
+                continue
+
+            stop_price = self.stop_loss_manager.get_stop_price(symbol) or price
+            triggered.append(symbol)
+
+            is_read_only = bool(self.read_only_guard and self.read_only_guard.is_read_only)
+            if is_read_only:
+                last_alert = self._last_stop_alerts.get(symbol)
+                if last_alert is None or (timestamp - last_alert).total_seconds() >= 60:
+                    message = f"{symbol} stop {stop_price:.4f} triggered at {price:.4f}; read-only blocks close"
+                    logger.warning(message)
+                    if reporter is not None:
+                        reporter.record_warning(timestamp, message)
+                    if EVENTS_AVAILABLE:
+                        self._publish_event(_stop_triggered_event(symbol, stop_price, price))
+                    self._last_stop_alerts[symbol] = timestamp
+                continue
+
+            try:
+                closing_quantity = position.quantity
+                if EVENTS_AVAILABLE:
+                    self._publish_event(_stop_triggered_event(symbol, stop_price, price))
+                self._rebalance_position(symbol, 0.0, price, timestamp, exit_reason="stop_loss")
+                self._sync_account_from_executor(timestamp, prices)
+                residual_position = self.account.positions.get(symbol)
+                if residual_position is not None and abs(residual_position.quantity) > 1e-8:
+                    residual_side = "long" if residual_position.quantity > 0 else "short"
+                    self.stop_loss_manager.calculate_initial_stop(
+                        symbol,
+                        residual_position.entry_price,
+                        residual_side,
+                        atr_value,
+                        timestamp,
+                    )
+                    raise RuntimeError(
+                        f"residual quantity {residual_position.quantity:.8f} remains after close"
+                    )
+                if self.audit_logger is not None:
+                    self.audit_logger.log_order(
+                        action="stop_loss_close",
+                        symbol=symbol,
+                        side="SELL" if closing_quantity > 0 else "BUY",
+                        quantity=abs(closing_quantity),
+                        price=price,
+                        order_id=None,
+                        execution_mode=self.execution_mode,
+                    )
+                self.stop_loss_manager.remove_stop(symbol)
+                self._last_stop_alerts.pop(symbol, None)
+                self.account.mark_to_market(prices, self.max_leverage, self.liquidation_threshold)
+            except Exception as exc:
+                message = f"Stop-loss close failed for {symbol}: {exc}"
+                logger.error(message)
+                if EVENTS_AVAILABLE:
+                    self._publish_event(
+                        _risk_alert_event(
+                            alert_type="stop_loss_execution",
+                            message=message,
+                            severity="critical",
+                            details={"symbol": symbol, "stop_price": stop_price, "price": price},
+                        )
+                    )
+                if self.execution_mode in ("paper", "live"):
+                    self.activate_kill_switch(reason=message, close_positions=False)
+        return triggered
 
     def _publish_event(self, event) -> None:
         """Publish an event to the event bus if available."""
@@ -554,6 +667,8 @@ class RealTimeTradingEngine:
                         f"RECONCILE: {reconciliation.get('error', 'Unknown reconciliation error')}",
                     )
 
+            self._process_stop_losses(prices, loop_ts, reporter)
+
             # Update risk manager with current equity
             if self.risk_manager is not None:
                 self.risk_manager.update_equity(self.account.equity, current_time)
@@ -897,6 +1012,7 @@ class RealTimeTradingEngine:
         target_quantity: float,
         price: float,
         timestamp: pd.Timestamp,
+        exit_reason: str | None = None,
     ) -> None:
         position = self.account.positions.get(symbol)
 
@@ -947,6 +1063,14 @@ class RealTimeTradingEngine:
                 leverage=leverage,
                 opened_at=timestamp,
             )
+            if self.stop_loss_enabled:
+                self.stop_loss_manager.calculate_initial_stop(
+                    symbol,
+                    exec_price,
+                    "long" if target_quantity > 0 else "short",
+                    self._calculate_stop_atr(symbol, timestamp),
+                    timestamp,
+                )
             self.trade_log.append(
                 {
                     "timestamp": timestamp.isoformat(),
@@ -980,18 +1104,19 @@ class RealTimeTradingEngine:
             realized = (exec_price - position.entry_price) * existing_qty
             self.account.balance += realized - comm
             self.account.realized_pnl += realized - comm
-            self.trade_log.append(
-                {
-                    "timestamp": timestamp.isoformat(),
-                    "symbol": symbol,
-                    "action": "close",
-                    "quantity": existing_qty,
-                    "price": exec_price,
-                    "commission": comm,
-                    "slippage_cost": slip,
-                    "realized_pnl": realized - comm,
-                }
-            )
+            trade_entry = {
+                "timestamp": timestamp.isoformat(),
+                "symbol": symbol,
+                "action": "close",
+                "quantity": existing_qty,
+                "price": exec_price,
+                "commission": comm,
+                "slippage_cost": slip,
+                "realized_pnl": realized - comm,
+            }
+            if exit_reason:
+                trade_entry["exit_reason"] = exit_reason
+            self.trade_log.append(trade_entry)
             if self.risk_manager is not None:
                 self.risk_manager.record_trade_result(
                     realized - comm,
@@ -1009,6 +1134,8 @@ class RealTimeTradingEngine:
                     )
                 )
             del self.account.positions[symbol]
+            self.stop_loss_manager.remove_stop(symbol)
+            self._last_stop_alerts.pop(symbol, None)
             return
 
         if existing_qty * target_quantity > 0:
@@ -1055,6 +1182,7 @@ class RealTimeTradingEngine:
                 )
                 if abs(position.quantity) < 1e-8:
                     del self.account.positions[symbol]
+                    self.stop_loss_manager.remove_stop(symbol)
             return
 
         delta_close = -existing_qty
@@ -1086,6 +1214,15 @@ class RealTimeTradingEngine:
             leverage=leverage,
             opened_at=timestamp,
         )
+        if self.stop_loss_enabled:
+            self.stop_loss_manager.remove_stop(symbol)
+            self.stop_loss_manager.calculate_initial_stop(
+                symbol,
+                exec_open,
+                "long" if target_quantity > 0 else "short",
+                self._calculate_stop_atr(symbol, timestamp),
+                timestamp,
+            )
         self.trade_log.append(
             {
                 "timestamp": timestamp.isoformat(),
@@ -1162,6 +1299,8 @@ class RealTimeTradingEngine:
                     }
                 )
             self.account.positions.clear()
+            self.stop_loss_manager.stop_levels.clear()
+            self._last_stop_alerts.clear()
             self.account.equity = self.account.balance
             self.account.margin_used = 0
             self.account.available_margin = 0
