@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -777,6 +778,13 @@ class RealTimeTradingEngine:
                     "message": f"Exposure for {symbol} must be numeric.",
                     "notes": notes,
                 }
+            if not math.isfinite(value):
+                return {
+                    "valid": False,
+                    "code": "INVALID_NUMBER",
+                    "message": f"Exposure for {symbol} must be finite.",
+                    "notes": notes,
+                }
 
             if per_symbol_cap > 0.0:
                 if allow_rescale:
@@ -1175,10 +1183,16 @@ class RealTimeTradingEngine:
         source: str = "external_command",
         market_prices: dict[str, float] | None = None,
         timestamp: pd.Timestamp | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         timestamp = (
             pd.Timestamp(timestamp) if timestamp is not None else pd.Timestamp.utcnow().floor("s")
         )
+
+        def record_decision(*args, **kwargs) -> None:
+            if not dry_run:
+                self._log_decision(*args, **kwargs)
+
         raw_agent_notes = plan.get("agent_adjustments") if isinstance(plan, dict) else []
         if isinstance(raw_agent_notes, (list, tuple, set)):
             agent_notes = [str(note) for note in raw_agent_notes if note]
@@ -1205,7 +1219,7 @@ class RealTimeTradingEngine:
                         "positions": [],
                         "account": self._account_snapshot(),
                     }
-                    self._log_decision(
+                    record_decision(
                         timestamp,
                         source,
                         requested_exposure={},
@@ -1249,7 +1263,7 @@ class RealTimeTradingEngine:
                 "positions": self._positions_snapshot(prices),
                 "account": self._account_snapshot(),
             }
-            self._log_decision(
+            record_decision(
                 timestamp,
                 source,
                 requested_exposure=requested_exposures,
@@ -1279,6 +1293,7 @@ class RealTimeTradingEngine:
                     current_equity=self.account.equity,
                     initial_equity=self.initial_capital,
                     current_time=current_time_dt,
+                    record_violation=not dry_run,
                 )
                 if not risk_ok:
                     logger.warning("Risk check failed for %s: %s", sym, risk_violations)
@@ -1307,7 +1322,7 @@ class RealTimeTradingEngine:
                     "positions": self._positions_snapshot(prices),
                     "account": self._account_snapshot(),
                 }
-                self._log_decision(
+                record_decision(
                     timestamp,
                     source,
                     requested_exposure=exposures,
@@ -1334,7 +1349,7 @@ class RealTimeTradingEngine:
                 "positions": self._positions_snapshot(prices),
                 "account": self._account_snapshot(),
             }
-            self._log_decision(
+            record_decision(
                 timestamp,
                 source,
                 requested_exposure=exposures,
@@ -1361,7 +1376,7 @@ class RealTimeTradingEngine:
                 "positions": self._positions_snapshot(prices),
                 "account": self._account_snapshot(),
             }
-            self._log_decision(
+            record_decision(
                 timestamp,
                 source,
                 requested_exposure=exposures,
@@ -1374,6 +1389,63 @@ class RealTimeTradingEngine:
                 action=plan_action,
             )
             return response
+
+        if dry_run:
+            projected_orders = []
+            for symbol in self.market_data.symbols:
+                price = prices.get(symbol)
+                if price is None or price <= 0:
+                    continue
+                current_position = self.account.positions.get(symbol)
+                current_quantity = (
+                    current_position.quantity if current_position is not None else 0.0
+                )
+                target_exposure = float(exposures.get(symbol, 0.0))
+                target_quantity = target_exposure * equity / price
+                quantity_delta = target_quantity - current_quantity
+                if abs(quantity_delta) <= 1e-9:
+                    continue
+                estimated_notional = abs(quantity_delta * price)
+                projected_orders.append(
+                    {
+                        "symbol": symbol,
+                        "side": "BUY" if quantity_delta > 0 else "SELL",
+                        "quantity": abs(quantity_delta),
+                        "reference_price": price,
+                        "estimated_notional": estimated_notional,
+                        "estimated_commission": estimated_notional * self.commission_rate,
+                    }
+                )
+
+            control_blockers = []
+            if self._shutdown_requested:
+                control_blockers.append("shutdown_requested")
+            if self._kill_switch_active:
+                control_blockers.append("kill_switch_active")
+            if self.read_only_guard is not None and self.read_only_guard.is_read_only:
+                control_blockers.append("read_only")
+            return {
+                "status": "preview",
+                "valid": not control_blockers,
+                "timestamp": timestamp.isoformat(),
+                "requested_exposures": requested_exposures,
+                "target_exposures": exposures,
+                "current_exposures": current_exposures,
+                "projected_orders": projected_orders,
+                "estimated_commission": sum(
+                    order["estimated_commission"] for order in projected_orders
+                ),
+                "margin_required": margin_required,
+                "margin_available": equity,
+                "control_blockers": control_blockers,
+                "adjustments": {"agent": agent_notes, "engine": engine_notes},
+                "reason": None
+                if not control_blockers
+                else {
+                    "code": "CONTROL_BLOCKED",
+                    "message": f"Execution blocked by: {', '.join(control_blockers)}.",
+                },
+            }
 
         applied_exposures: dict[str, float] = {}
         try:
@@ -1405,7 +1477,7 @@ class RealTimeTradingEngine:
                 "positions": self._positions_snapshot(prices),
                 "account": self._account_snapshot(),
             }
-            self._log_decision(
+            record_decision(
                 timestamp,
                 source,
                 requested_exposure=exposures,
@@ -1455,7 +1527,7 @@ class RealTimeTradingEngine:
                         logger.debug("Audit log write failed: %s", exc)
 
         reasoning = plan.get("reasoning", "")
-        self._log_decision(
+        record_decision(
             timestamp,
             source,
             requested_exposure=exposures,

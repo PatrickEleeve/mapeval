@@ -235,6 +235,18 @@ def create_app() -> FastAPI:
             "symbols": list(getattr(_engine.market_data, "symbols", [])),
         }
 
+    @app.post("/api/plans/preview")
+    async def preview_trading_plan(request: Request, payload: dict[str, Any]):
+        """Validate and price a trading plan without placing orders."""
+        _require_api_token(request)
+        if _engine is None:
+            raise HTTPException(status_code=503, detail="Engine not initialized")
+        if not isinstance(payload.get("actions"), list):
+            raise HTTPException(status_code=422, detail="Plan actions must be a list")
+        if any(not isinstance(action, dict) for action in payload["actions"]):
+            raise HTTPException(status_code=422, detail="Each plan action must be an object")
+        return _engine.execute_trading_plan(payload, source="api_preview", dry_run=True)
+
     # ── Manual Override ─────────────────────────────────────────────
 
     @app.post("/api/shutdown")

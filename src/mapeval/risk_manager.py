@@ -149,6 +149,8 @@ class RiskManager:
         current_equity: float,
         initial_equity: float,
         current_time: datetime,
+        *,
+        record_violation: bool = True,
     ) -> tuple[bool, list[str]]:
         violations: list[str] = []
 
@@ -172,7 +174,7 @@ class RiskManager:
         if not ok:
             violations.append(msg)
 
-        if violations:
+        if violations and record_violation:
             self.violations.append(
                 {
                     "timestamp": current_time.isoformat(),

@@ -48,6 +48,11 @@ if FASTAPI_AVAILABLE:
             self.commission_rate = 0.0
             self.slippage = 0.0
             self.risk_manager = None
+            self.preview_calls = []
+
+        def execute_trading_plan(self, payload, source: str, dry_run: bool):
+            self.preview_calls.append((payload, source, dry_run))
+            return {"status": "preview", "valid": True, "projected_orders": []}
 
         def set_read_only(self, enabled: bool) -> bool:
             if enabled:
@@ -93,6 +98,27 @@ if FASTAPI_AVAILABLE:
         release = client.post("/api/kill-switch", json={"enabled": False})
         assert release.status_code == 200
         assert release.json()["kill_switch_active"] is False
+
+    def test_plan_preview_uses_dry_run_execution():
+        engine = DummyEngine()
+        set_engine(engine)
+        set_api_token(None)
+        client = TestClient(create_app())
+
+        response = client.post(
+            "/api/plans/preview",
+            json={"actions": [{"symbol": "BTCUSDT", "target_exposure": 0.5}]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "preview"
+        assert engine.preview_calls[0][1:] == ("api_preview", True)
+
+        invalid = client.post("/api/plans/preview", json={})
+        assert invalid.status_code == 422
+
+        invalid_action = client.post("/api/plans/preview", json={"actions": ["buy"]})
+        assert invalid_action.status_code == 422
 
     def test_control_endpoints_require_token_when_configured():
         set_engine(DummyEngine())

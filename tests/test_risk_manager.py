@@ -45,6 +45,23 @@ class TestRiskManagerInitialization:
         rm.update_equity(105_000.0, now)
         assert rm.state.peak_equity == 110_000.0
 
+    def test_dry_run_risk_check_does_not_record_violation(self):
+        rm = RiskManager(RiskLimits(max_drawdown=0.10))
+        rm.initialize(100_000.0)
+
+        ok, violations = rm.check_order(
+            symbol="BTCUSDT",
+            target_exposure=1.0,
+            current_equity=80_000.0,
+            initial_equity=100_000.0,
+            current_time=datetime.now(timezone.utc),
+            record_violation=False,
+        )
+
+        assert ok is False
+        assert violations
+        assert rm.violations == []
+
 
 class TestDrawdownCheck:
     def test_within_limit(self):

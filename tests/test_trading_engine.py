@@ -257,6 +257,22 @@ class TestRealTimeTradingEngine:
         assert result["valid"] is False
         assert result["code"] == "UNKNOWN_SYMBOL"
 
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_validate_exposures_rejects_non_finite_values(self, value):
+        engine = RealTimeTradingEngine(
+            market_data=MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0}),
+            agent=MockAgent(),
+            initial_capital=100_000.0,
+            max_leverage=10.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+        )
+
+        result = engine._validate_exposures({"BTCUSDT": value}, allow_rescale=False)
+
+        assert result["valid"] is False
+        assert result["code"] == "INVALID_NUMBER"
+
     def test_validate_exposures_clips_per_symbol_limit(self):
         market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50000.0})
         agent = MockAgent()
@@ -381,6 +397,77 @@ class TestLiquidationDetection:
 
 
 class TestExecutionSafety:
+    def test_plan_preview_never_places_orders_or_records_decision(self):
+        market_data = MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0})
+        executor = RecordingExecutor()
+        engine = RealTimeTradingEngine(
+            market_data=market_data,
+            agent=MockAgent(),
+            initial_capital=100_000.0,
+            max_leverage=2.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+            execution_mode="paper",
+            order_executor=executor,
+            commission_rate=0.001,
+        )
+
+        result = engine.execute_trading_plan(
+            {"actions": [{"symbol": "BTCUSDT", "target_exposure": 1.0}]},
+            market_prices={"BTCUSDT": 50_000.0},
+            dry_run=True,
+        )
+
+        assert result["status"] == "preview"
+        assert result["valid"] is True
+        assert result["projected_orders"][0]["quantity"] == pytest.approx(2.0)
+        assert result["estimated_commission"] == pytest.approx(100.0)
+        assert executor.orders == []
+        assert engine.trade_log == []
+        assert engine.decision_log == []
+        assert engine.account.positions == {}
+
+    def test_plan_preview_reports_control_blockers(self):
+        engine = RealTimeTradingEngine(
+            market_data=MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0}),
+            agent=MockAgent(),
+            initial_capital=100_000.0,
+            max_leverage=2.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+        )
+        engine.read_only_guard = ReadOnlyGuard(enabled=True)
+
+        result = engine.execute_trading_plan(
+            {"actions": [{"symbol": "BTCUSDT", "target_exposure": 1.0}]},
+            market_prices={"BTCUSDT": 50_000.0},
+            dry_run=True,
+        )
+
+        assert result["valid"] is False
+        assert result["reason"]["code"] == "CONTROL_BLOCKED"
+        assert "read_only" in result["control_blockers"]
+
+    def test_rejected_plan_preview_does_not_record_decision(self):
+        engine = RealTimeTradingEngine(
+            market_data=MockMarketData(["BTCUSDT"], {"BTCUSDT": 50_000.0}),
+            agent=MockAgent(),
+            initial_capital=100_000.0,
+            max_leverage=2.0,
+            poll_interval_seconds=5.0,
+            decision_interval_seconds=60.0,
+        )
+
+        result = engine.execute_trading_plan(
+            {"actions": [{"symbol": "UNKNOWN", "target_exposure": 1.0}]},
+            market_prices={"BTCUSDT": 50_000.0},
+            dry_run=True,
+        )
+
+        assert result["status"] == "rejected"
+        assert result["reason"]["code"] == "UNKNOWN_SYMBOL"
+        assert engine.decision_log == []
+
     def test_paper_executor_uses_initial_balance(self):
         executor = PaperExecutor(initial_balance=12_345.0)
         assert executor.sync_balance() == pytest.approx(12_345.0)

@@ -109,6 +109,20 @@ simulation, so it cannot reach paper or live order execution.
 
 Ad-hoc connectivity/provider smoke scripts live under `scripts/manual/`. They are not part of `pytest` and now read credentials from environment variables only.
 
+## Trading Plan Preview
+
+When the monitoring API is enabled, validate a proposed exposure change without placing orders:
+
+```bash
+curl -X POST http://localhost:8000/api/plans/preview \
+  -H "Authorization: Bearer $MAPEVAL_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"actions":[{"symbol":"BTCUSDT","target_exposure":0.5}]}'
+```
+
+The response includes target exposures, projected orders, estimated commission,
+margin requirements, engine adjustments, and read-only or kill-switch blockers.
+
 ## Installed CLI
 
 If you install the project as a package, the console entrypoint is:
